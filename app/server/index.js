@@ -81,18 +81,24 @@ const isLoopbackRequest = (req) => {
 
 const sendUploadCompletedToParent = (event, targetProcess = process) => {
   if (!targetProcess?.connected || typeof targetProcess.send !== 'function') {
+    console.info('[auto-copy] IPC unavailable; standalone upload remains successful');
     return false;
   }
 
   try {
     targetProcess.send(event, (error) => {
       if (error) {
-        console.warn('Could not send upload completion event to Electron:', error);
+        console.warn('[auto-copy] failed: IPC event delivery', error);
+        return;
       }
+      console.info('[auto-copy] IPC event sent', {
+        batchId: event?.batchId || '',
+        filename: event?.firstImage?.name || '',
+      });
     });
     return true;
   } catch (error) {
-    console.warn('Could not send upload completion event to Electron:', error);
+    console.warn('[auto-copy] failed: IPC event send', error);
     return false;
   }
 };

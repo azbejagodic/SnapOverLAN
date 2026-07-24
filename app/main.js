@@ -42,6 +42,7 @@ const SERVER_SHUTDOWN_URL = `http://127.0.0.1:${PORT}/api/server-shutdown`;
 const SERVER_STOP_TIMEOUT_MS = 1000;
 const SERVER_FORCE_STOP_TIMEOUT_MS = 500;
 const LEGACY_SERVER_ERROR = 'An older SnapOverLAN server is running. Stop it once and restart the app.';
+const AUTO_COPY_UNAVAILABLE_MESSAGE = 'Auto-copy unavailable because another SnapOverLAN server is running.';
 
 electronApp.setName('SnapOverLAN');
 
@@ -56,6 +57,7 @@ let serverOperationType = '';
 let verifiedShutdownToken = '';
 let backgroundMode = false;
 let autoCopyFirstPhoto = false;
+let autoCopyUnavailableReason = '';
 let quitOperation = null;
 let allowQuit = false;
 const ownedServerMessageListeners = new WeakMap();
@@ -215,8 +217,14 @@ const sendDesktopState = () => {
       server: getServerStatePayload(),
       backgroundMode,
       autoCopyFirstPhoto,
+      autoCopyAvailable: Boolean(ownedServerProcess),
+      autoCopyUnavailableReason,
     });
   }
+};
+
+const logAutoCopy = (stage, details = {}) => {
+  console.info(`[auto-copy] ${stage}`, details);
 };
 
 const updateTrayMenu = () => {
@@ -316,15 +324,19 @@ const sendAutoCopyResult = (result) => {
   if (
     !mainWindow
     || mainWindow.isDestroyed()
-    || !['copied', 'failed'].includes(result?.status)
-    || typeof result.filename !== 'string'
+    || (
+      !['copied', 'failed'].includes(result?.status)
+      && typeof result?.message !== 'string'
+    )
   ) {
     return;
   }
 
   mainWindow.webContents.send('desktop:auto-copy-result', {
     success: result.status === 'copied',
-    filename: result.filename,
+    filename: typeof result.filename === 'string' ? result.filename : '',
+    message: typeof result.message === 'string' ? result.message : '',
+    reason: typeof result.reason === 'string' ? result.reason : '',
   });
 };
 
@@ -338,7 +350,10 @@ const handleOwnedServerMessage = async (serverProcess, message) => {
     enabled: autoCopyFirstPhoto,
     fileExists: uploadedFileExists,
     createImageFromPath: (filePath) => nativeImage.createFromPath(filePath),
+    createImageFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
     writeImage: (image) => clipboard.writeImage(image),
+    readImage: () => clipboard.readImage(),
+    onDiagnostic: logAutoCopy,
   });
 
   if (result.status === 'failed') {
@@ -367,13 +382,57 @@ const attachOwnedServerMessageListener = (serverProcess) => {
   serverProcess.on('message', listener);
 };
 
+const stopVerifiedReusedServerForAutoCopy = async (identity) => {
+  if (
+    identity?.kind !== 'current'
+    || typeof identity.shutdownToken !== 'string'
+    || !/^[a-f0-9]{64}$/.test(identity.shutdownToken)
+  ) {
+    return false;
+  }
+
+  logAutoCopy('requesting ownership from verified reused server');
+  try {
+    await postServerShutdown(identity.shutdownToken);
+    const released = await waitForPortRelease(
+      SERVER_STOP_TIMEOUT_MS + SERVER_FORCE_STOP_TIMEOUT_MS,
+    );
+    if (!released) {
+      throw new Error(`Port ${PORT} was not released.`);
+    }
+    logAutoCopy('verified reused server stopped');
+    return true;
+  } catch (error) {
+    logAutoCopy('failed', {
+      reason: `Could not stop verified reused server: ${error.message}`,
+    });
+    return false;
+  }
+};
+
 const startServerInternal = async () => {
   if (serverState === 'online') {
     return getServerStatePayload();
   }
 
   setServerState('starting');
-  const existingIdentity = await getServerIdentity();
+  let existingIdentity = await getServerIdentity();
+  if (existingIdentity?.shutdownToken && autoCopyFirstPhoto) {
+    const stoppedForOwnership = await stopVerifiedReusedServerForAutoCopy(existingIdentity);
+    if (stoppedForOwnership) {
+      existingIdentity = null;
+      verifiedShutdownToken = '';
+      serverLaunchMode = 'offline';
+      autoCopyUnavailableReason = '';
+    } else {
+      existingIdentity = await getServerIdentity();
+      if (existingIdentity?.shutdownToken) {
+        autoCopyUnavailableReason = AUTO_COPY_UNAVAILABLE_MESSAGE;
+      } else if (!existingIdentity && !(await isPortInUse())) {
+        autoCopyUnavailableReason = '';
+      }
+    }
+  }
   if (existingIdentity?.shutdownToken) {
     verifiedShutdownToken = existingIdentity.shutdownToken;
     serverLaunchMode = 'reused';
@@ -382,7 +441,8 @@ const startServerInternal = async () => {
       logFile: getStartupLogPath(),
     });
     if (autoCopyFirstPhoto) {
-      console.warn('Auto-copy is enabled but unavailable while using a reused SnapOverLAN server.');
+      logAutoCopy('waiting', { reason: autoCopyUnavailableReason });
+      sendAutoCopyResult({ status: 'failed', message: autoCopyUnavailableReason });
     }
     setServerState('online');
     return getServerStatePayload();
@@ -443,12 +503,16 @@ const startServerInternal = async () => {
     windowsHide: true,
   });
   ownedServerProcess = serverProcess;
+  autoCopyUnavailableReason = '';
   attachOwnedServerMessageListener(serverProcess);
 
   serverProcess.once('error', (error) => {
     detachOwnedServerMessageListener(serverProcess);
     if (ownedServerProcess === serverProcess) {
       ownedServerProcess = null;
+      if (autoCopyFirstPhoto) {
+        autoCopyUnavailableReason = 'Auto-copy is waiting for the local server.';
+      }
       verifiedShutdownToken = '';
       setServerState('error', `Could not start the server: ${error.message}`);
     }
@@ -459,6 +523,9 @@ const startServerInternal = async () => {
       return;
     }
     ownedServerProcess = null;
+    if (autoCopyFirstPhoto) {
+      autoCopyUnavailableReason = 'Auto-copy is waiting for the local server.';
+    }
     verifiedShutdownToken = '';
     if (serverState !== 'stopping' && !allowQuit) {
       const error = `Server process exited unexpectedly (${signal || code}).`;
@@ -760,6 +827,69 @@ async function setBackgroundMode(enabled) {
   return backgroundMode;
 }
 
+const acquireOwnedServerForAutoCopy = async () => {
+  if (ownedServerProcess) {
+    return true;
+  }
+  if (
+    serverLaunchMode !== 'reused'
+    || !/^[a-f0-9]{64}$/.test(verifiedShutdownToken)
+  ) {
+    autoCopyUnavailableReason = AUTO_COPY_UNAVAILABLE_MESSAGE;
+    sendDesktopState();
+    sendAutoCopyResult({ status: 'failed', message: autoCopyUnavailableReason });
+    return false;
+  }
+
+  setServerState('starting');
+  const stopped = await stopVerifiedReusedServerForAutoCopy({
+    kind: 'current',
+    shutdownToken: verifiedShutdownToken,
+  });
+  if (!stopped) {
+    const remainingIdentity = await getServerIdentity();
+    if (remainingIdentity?.shutdownToken) {
+      verifiedShutdownToken = remainingIdentity.shutdownToken;
+      serverLaunchMode = 'reused';
+      autoCopyUnavailableReason = AUTO_COPY_UNAVAILABLE_MESSAGE;
+      setServerState('online');
+    } else if (!remainingIdentity && !(await isPortInUse())) {
+      verifiedShutdownToken = '';
+      serverLaunchMode = 'offline';
+      autoCopyUnavailableReason = '';
+      setServerState('offline');
+      try {
+        await startServer();
+        return Boolean(ownedServerProcess);
+      } catch {
+        autoCopyUnavailableReason = 'Auto-copy is waiting for the local server.';
+      }
+    } else {
+      autoCopyUnavailableReason = AUTO_COPY_UNAVAILABLE_MESSAGE;
+      setServerState('error', autoCopyUnavailableReason);
+    }
+    sendAutoCopyResult({ status: 'failed', message: autoCopyUnavailableReason });
+    return false;
+  }
+
+  verifiedShutdownToken = '';
+  serverLaunchMode = 'offline';
+  autoCopyUnavailableReason = '';
+  setServerState('offline');
+  try {
+    await startServer();
+    return Boolean(ownedServerProcess);
+  } catch (error) {
+    autoCopyUnavailableReason = 'Auto-copy is waiting for the local server.';
+    sendDesktopState();
+    sendAutoCopyResult({
+      status: 'failed',
+      message: AUTO_COPY_UNAVAILABLE_MESSAGE,
+    });
+    return false;
+  }
+};
+
 async function setAutoCopyFirstPhoto(enabled) {
   const nextValue = Boolean(enabled);
   if (autoCopyFirstPhoto === nextValue) {
@@ -775,10 +905,18 @@ async function setAutoCopyFirstPhoto(enabled) {
     throw error;
   }
 
-  if (autoCopyFirstPhoto && serverLaunchMode === 'reused') {
-    console.warn('Auto-copy is enabled but unavailable while using a reused SnapOverLAN server.');
+  logAutoCopy(`setting ${autoCopyFirstPhoto ? 'enabled' : 'disabled'}`);
+  if (!autoCopyFirstPhoto) {
+    autoCopyUnavailableReason = '';
   }
   sendDesktopState();
+  if (
+    autoCopyFirstPhoto
+    && serverState === 'online'
+    && !ownedServerProcess
+  ) {
+    await acquireOwnedServerForAutoCopy();
+  }
   return autoCopyFirstPhoto;
 }
 

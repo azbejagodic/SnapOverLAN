@@ -185,12 +185,21 @@ const createApiRouter = ({ getServerStatus, onUploadCompleted = () => {} }) => {
   router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
     try {
       const files = await finalizeUploadedBatch(req);
+      console.info('[auto-copy] upload completed', {
+        batchId: req.uploadBatchId || '',
+        fileCount: Array.isArray(req.files) ? req.files.length : 0,
+      });
       const completionEvent = createUploadCompletedEvent(req);
       if (completionEvent) {
+        console.info('[auto-copy] event created', {
+          batchId: completionEvent.batchId,
+          filename: completionEvent.firstImage.name,
+          mimeType: completionEvent.firstImage.mimeType,
+        });
         try {
           await onUploadCompleted(completionEvent);
         } catch (error) {
-          console.warn('Could not deliver upload completion event:', error);
+          console.warn('[auto-copy] failed: could not deliver upload completion event', error);
         }
       }
       res.json({ files });

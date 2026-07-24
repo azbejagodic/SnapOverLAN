@@ -110,6 +110,8 @@ let desktopServerState = 'offline';
 let serverRetryOperation = null;
 let backgroundModeEnabled = false;
 let autoCopyFirstPhotoEnabled = false;
+let autoCopyAvailable = false;
+let autoCopyUnavailableReason = '';
 let autoCopySettingOperation = null;
 let autoCopyMessageTimer = null;
 const launchParams = new URLSearchParams(window.location.search);
@@ -891,12 +893,17 @@ function renderDesktopControls() {
   }
 
   if (autoCopyToggleBtn) {
-    autoCopyToggleBtn.textContent = `Auto-copy: ${autoCopyFirstPhotoEnabled ? 'On' : 'Off'}`;
+    const autoCopyState = autoCopyFirstPhotoEnabled
+      ? autoCopyAvailable ? 'On' : 'Waiting'
+      : 'Off';
+    autoCopyToggleBtn.textContent = `Auto-copy: ${autoCopyState}`;
     autoCopyToggleBtn.disabled = Boolean(autoCopySettingOperation);
     autoCopyToggleBtn.setAttribute('aria-pressed', String(autoCopyFirstPhotoEnabled));
     autoCopyToggleBtn.setAttribute(
       'aria-label',
-      autoCopyFirstPhotoEnabled
+      autoCopyFirstPhotoEnabled && !autoCopyAvailable
+        ? autoCopyUnavailableReason || 'Auto-copy is enabled and waiting for an owned server'
+        : autoCopyFirstPhotoEnabled
         ? 'Turn automatic copying of the first uploaded photo off'
         : 'Turn automatic copying of the first uploaded photo on',
     );
@@ -929,6 +936,7 @@ async function syncDesktopControls() {
     ]);
     backgroundModeEnabled = server?.state === 'online' && Boolean(background);
     autoCopyFirstPhotoEnabled = Boolean(autoCopy);
+    autoCopyAvailable = Boolean(server?.owned);
     setDesktopServerState(server?.state);
     if (server?.state === 'error' && server.error) {
       renderStatus({ state: 'offline', message: server.error });
@@ -938,17 +946,30 @@ async function syncDesktopControls() {
   }
 }
 
-function showAutoCopyResult({ success, filename } = {}) {
-  if (!autoCopyMessage || typeof filename !== 'string' || !filename) {
+function showAutoCopyResult({
+  success,
+  filename,
+  message,
+  reason,
+} = {}) {
+  if (!autoCopyMessage) {
+    return;
+  }
+  const resultMessage = typeof message === 'string' && message
+    ? message
+    : typeof filename === 'string' && filename
+      ? success
+        ? `Copied ${filename} to clipboard`
+        : `Could not automatically copy ${filename}${reason ? `: ${reason}` : ''}`
+      : '';
+  if (!resultMessage) {
     return;
   }
 
   if (autoCopyMessageTimer !== null) {
     window.clearTimeout(autoCopyMessageTimer);
   }
-  autoCopyMessage.textContent = success
-    ? `Copied ${filename} to clipboard`
-    : `Could not automatically copy ${filename}`;
+  autoCopyMessage.textContent = resultMessage;
   autoCopyMessage.classList.toggle('error', !success);
   autoCopyMessage.hidden = false;
   autoCopyMessageTimer = window.setTimeout(() => {
@@ -2095,9 +2116,15 @@ window.snapOverLAN?.onDesktopStateChanged?.(({
   server,
   backgroundMode,
   autoCopyFirstPhoto,
+  autoCopyAvailable: nextAutoCopyAvailable,
+  autoCopyUnavailableReason: nextAutoCopyUnavailableReason,
 }) => {
   backgroundModeEnabled = server?.state === 'online' && Boolean(backgroundMode);
   autoCopyFirstPhotoEnabled = Boolean(autoCopyFirstPhoto);
+  autoCopyAvailable = Boolean(nextAutoCopyAvailable);
+  autoCopyUnavailableReason = typeof nextAutoCopyUnavailableReason === 'string'
+    ? nextAutoCopyUnavailableReason
+    : '';
   setDesktopServerState(server?.state);
   if (server?.state === 'starting') {
     renderStatus({ state: 'checking', message: 'Starting the local server...' });

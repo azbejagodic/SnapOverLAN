@@ -250,15 +250,37 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
   assert.match(serverSource, /targetProcess\?\.connected[\s\S]*?typeof targetProcess\.send !== 'function'/);
   assert.match(mainSource, /ownedServerProcess !== serverProcess/);
   assert.match(mainSource, /nativeImage\.createFromPath\(filePath\)/);
+  assert.match(mainSource, /nativeImage\.createFromBuffer\(buffer\)/);
   assert.match(mainSource, /clipboard\.writeImage\(image\)/);
+  assert.match(mainSource, /clipboard\.readImage\(\)/);
   assert.match(mainSource, /mainWindow\.webContents\.send\('desktop:auto-copy-result'/);
   assert.match(mainSource, /autoCopyFirstPhoto,/);
-  assert.match(rendererSource, /Auto-copy: \$\{autoCopyFirstPhotoEnabled \? 'On' : 'Off'\}/);
+  assert.match(rendererSource, /autoCopyAvailable \? 'On' : 'Waiting'/);
   assert.match(rendererSource, /aria-pressed', String\(autoCopyFirstPhotoEnabled\)/);
   assert.match(rendererSource, /Copied \$\{filename\} to clipboard/);
   assert.doesNotMatch(rendererSource, /copyFirstUploadedImage|nativeImage|clipboard\.writeImage/);
   assert.doesNotMatch(selectBatchSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);
   assert.doesNotMatch(loadLatestPicturesSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);
+});
+
+test('verified reused servers are replaced by one owned child when auto-copy is enabled', () => {
+  assert.match(
+    mainSource,
+    /identity\?\.kind !== 'current'[\s\S]*?identity\.shutdownToken[\s\S]*?postServerShutdown\(identity\.shutdownToken\)/,
+  );
+  assert.match(
+    mainSource,
+    /existingIdentity\?\.shutdownToken && autoCopyFirstPhoto[\s\S]*?stopVerifiedReusedServerForAutoCopy\(existingIdentity\)/,
+  );
+  assert.match(
+    mainSource,
+    /serverLaunchMode !== 'reused'[\s\S]*?verifiedShutdownToken[\s\S]*?stopVerifiedReusedServerForAutoCopy[\s\S]*?await startServer\(\)/,
+  );
+  assert.match(mainSource, /Auto-copy: Waiting|AUTO_COPY_UNAVAILABLE_MESSAGE/);
+  assert.match(mainSource, /ownedServerMessageListeners = new WeakMap\(\)/);
+  assert.match(mainSource, /detachOwnedServerMessageListener\(serverProcess\)/);
+  assert.ok(packageConfig.dependencies.sharp);
+  assert.equal(packageConfig.devDependencies.sharp, undefined);
 });
 
 test('desktop typography uses the bundled shared UI font and semantic weights', () => {

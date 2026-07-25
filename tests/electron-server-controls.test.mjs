@@ -90,11 +90,36 @@ test('preload exposes only narrow server, background, and auto-copy result metho
   assert.doesNotMatch(preloadSource, /startServer|stopServer|server:start|server:stop/);
   assert.match(preloadSource, /getBackgroundMode/);
   assert.match(preloadSource, /setBackgroundMode/);
+  assert.match(preloadSource, /copyImageBytes[\s\S]*?ipcRenderer\.invoke\('image:copy', imageBytes\)/);
+  assert.match(preloadSource, /imageBytes\.byteLength > MAX_IMAGE_COPY_BYTES/);
   assert.match(preloadSource, /onAutoCopyResult/);
   assert.match(preloadSource, /onDesktopStateChanged/);
   assert.doesNotMatch(preloadSource, /getAutoCopyFirstPhoto|setAutoCopyFirstPhoto|auto-copy:(?:get|set)/);
   assert.doesNotMatch(preloadSource, /ipcRenderer\.(?:send|sendSync)|require:\s*\(/);
   assert.doesNotMatch(preloadSource, /clipboard|nativeImage|node:fs|['"]fs['"]/);
+});
+
+test('picture Copy sends image bytes to main and never falls back to URL text', () => {
+  const copyImageSource = rendererSource.match(
+    /async function copyImage\(imageUrl\)[\s\S]*?\n\}/,
+  )?.[0];
+  assert.ok(copyImageSource);
+  assert.match(copyImageSource, /await fetch\(imageUrl\)/);
+  assert.match(copyImageSource, /response\.arrayBuffer\(\)/);
+  assert.match(copyImageSource, /window\.snapOverLAN\.copyImageBytes/);
+  assert.doesNotMatch(
+    copyImageSource,
+    /copyText|writeText|navigator\.clipboard|ClipboardItem/,
+  );
+  assert.match(
+    rendererSource,
+    /await copyImage\(mediaUrl\);[\s\S]*?setPicturesMessage\(error\.message \|\| 'Could not copy image\.'\)/,
+  );
+  assert.match(mainSource, /ipcMain\.handle\('image:copy'/);
+  assert.match(mainSource, /event\.sender !== mainWindow\.webContents/);
+  assert.match(mainSource, /copyImageBytesToClipboard\(\{/);
+  assert.match(mainSource, /nativeImage\.createFromBuffer\(buffer\)/);
+  assert.match(mainSource, /clipboard\.writeImage\(image\)/);
 });
 
 test('background mode is limited to an online server', () => {

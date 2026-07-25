@@ -519,27 +519,20 @@ async function copyText(text) {
 }
 
 async function copyImage(imageUrl) {
-  if (!navigator.clipboard || !window.ClipboardItem) {
-    await copyText(imageUrl);
-    return;
+  if (!window.snapOverLAN?.copyImageBytes) {
+    throw new Error('Image clipboard support is unavailable.');
   }
 
-  try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      throw new Error(`Copy failed (${response.status})`);
-    }
-
-    const blob = await response.blob();
-    const type = blob.type || 'image/png';
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        [type]: blob,
-      }),
-    ]);
-  } catch (_error) {
-    await copyText(imageUrl);
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new Error(`Copy failed (${response.status})`);
   }
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().startsWith('image/')) {
+    throw new Error('Copy failed because the selected file is not an image.');
+  }
+
+  await window.snapOverLAN.copyImageBytes(await response.arrayBuffer());
 }
 
 function getVideoMimeType(file) {
@@ -1373,6 +1366,9 @@ function createPictureActions(file, mediaUrl, variant = '') {
       copyButton.disabled = true;
       try {
         await copyImage(mediaUrl);
+        clearPicturesMessage();
+      } catch (error) {
+        setPicturesMessage(error.message || 'Could not copy image.');
       } finally {
         copyButton.disabled = false;
       }

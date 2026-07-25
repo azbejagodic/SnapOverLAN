@@ -24,6 +24,7 @@ import {
   normalizeDesktopSettings,
   updateDesktopSetting,
 } from './desktop-settings.js';
+import { copyImageBytesToClipboard } from './manual-copy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1005,6 +1006,17 @@ ipcMain.handle('server:get-state', () => getServerStatePayload());
 ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
+ipcMain.handle('image:copy', (event, imageBytes) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+    throw new Error('Image copy request was rejected.');
+  }
+
+  return copyImageBytesToClipboard({
+    imageBytes,
+    createImageFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
+    writeImage: (image) => clipboard.writeImage(image),
+  });
+});
 
 const gotLock = electronApp.requestSingleInstanceLock();
 

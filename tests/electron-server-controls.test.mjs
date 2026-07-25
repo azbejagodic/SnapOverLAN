@@ -17,6 +17,8 @@ const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
 const rendererSource = await readFile(path.join(projectRoot, 'app', 'renderer', 'app.js'), 'utf8');
+const extensionMarkup = await readFile(path.join(projectRoot, 'extension', 'popup.html'), 'utf8');
+const extensionSource = await readFile(path.join(projectRoot, 'extension', 'popup.js'), 'utf8');
 const rendererFont = await readFile(path.join(
   projectRoot,
   'app',
@@ -78,7 +80,7 @@ function waitForExit(child, timeoutMs = 5000) {
   ]);
 }
 
-test('preload exposes only narrow server, background, and auto-copy methods', () => {
+test('preload exposes only narrow server, background, and auto-copy result methods', () => {
   assert.match(mainSource, /preload:\s*preloadPath/);
   assert.match(mainSource, /contextIsolation:\s*true/);
   assert.match(mainSource, /nodeIntegration:\s*false/);
@@ -88,10 +90,9 @@ test('preload exposes only narrow server, background, and auto-copy methods', ()
   assert.doesNotMatch(preloadSource, /startServer|stopServer|server:start|server:stop/);
   assert.match(preloadSource, /getBackgroundMode/);
   assert.match(preloadSource, /setBackgroundMode/);
-  assert.match(preloadSource, /getAutoCopyFirstPhoto/);
-  assert.match(preloadSource, /setAutoCopyFirstPhoto/);
   assert.match(preloadSource, /onAutoCopyResult/);
   assert.match(preloadSource, /onDesktopStateChanged/);
+  assert.doesNotMatch(preloadSource, /getAutoCopyFirstPhoto|setAutoCopyFirstPhoto|auto-copy:(?:get|set)/);
   assert.doesNotMatch(preloadSource, /ipcRenderer\.(?:send|sendSync)|require:\s*\(/);
   assert.doesNotMatch(preloadSource, /clipboard|nativeImage|node:fs|['"]fs['"]/);
 });
@@ -227,7 +228,8 @@ test('disabling Background Mode restores the window without stopping the server'
 test('header controls are compact, accessible, and preserve existing actions', () => {
   assert.match(rendererMarkup, /id="connectionPill"/);
   assert.match(rendererMarkup, /id="backgroundToggleBtn"[^>]+aria-label=/);
-  assert.match(rendererMarkup, /id="autoCopyToggleBtn"[^>]+aria-label=[^>]+aria-pressed="false"/);
+  assert.doesNotMatch(rendererMarkup, /id="autoCopyToggleBtn"/);
+  assert.doesNotMatch(rendererSource, /autoCopyToggleBtn|getAutoCopyFirstPhoto|setAutoCopyFirstPhoto/);
   assert.match(rendererMarkup, /id="retryServerBtn"/);
   assert.match(rendererMarkup, /id="qrBtn"/);
   assert.match(rendererMarkup, /id="refreshBtn"/);
@@ -254,9 +256,22 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
   assert.match(mainSource, /clipboard\.writeImage\(image\)/);
   assert.match(mainSource, /clipboard\.readImage\(\)/);
   assert.match(mainSource, /mainWindow\.webContents\.send\('desktop:auto-copy-result'/);
-  assert.match(mainSource, /autoCopyFirstPhoto,/);
-  assert.match(rendererSource, /autoCopyAvailable \? 'On' : 'Waiting'/);
-  assert.match(rendererSource, /aria-pressed', String\(autoCopyFirstPhotoEnabled\)/);
+  assert.match(mainSource, /snapoverlan:auto-copy-request/);
+  assert.match(mainSource, /await setAutoCopyFirstPhoto\(message\.enabled\)/);
+  assert.match(mainSource, /snapoverlan:auto-copy-response/);
+  assert.match(apiSource, /router\.get\('\/auto-copy'/);
+  assert.match(apiSource, /router\.put\('\/auto-copy'/);
+  assert.match(apiSource, /typeof req\.body\?\.enabled !== 'boolean'/);
+  assert.match(serverSource, /isLoopbackRequest/);
+  assert.match(extensionMarkup, /id="autoCopyToggleBtn"[^>]+aria-pressed="false"[^>]*>Auto-copy: Off<\/button>/);
+  assert.match(extensionMarkup, /id="autoCopyToggleBtn"[^>]+disabled/);
+  assert.match(extensionMarkup, /id="status"[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(extensionSource, /`Auto-copy: \$\{autoCopyEnabled \? 'On' : 'Off'\}`/);
+  assert.match(extensionSource, /setAttribute\('aria-pressed', String\(autoCopyEnabled\)\)/);
+  assert.match(extensionSource, /requestAutoCopySetting\(origin, 'PUT', nextEnabled\)/);
+  assert.match(extensionSource, /auto-copy update failed[\s\S]*?setStatus\([^;]+,\s*'error'\)/);
+  assert.doesNotMatch(preloadSource, /auto-copy:(?:get|set)|getAutoCopyFirstPhoto|setAutoCopyFirstPhoto/);
+  assert.doesNotMatch(mainSource, /ipcMain\.handle\('auto-copy:(?:get|set)'/);
   assert.match(rendererSource, /Copied \$\{filename\} to clipboard/);
   assert.doesNotMatch(rendererSource, /copyFirstUploadedImage|nativeImage|clipboard\.writeImage/);
   assert.doesNotMatch(selectBatchSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);

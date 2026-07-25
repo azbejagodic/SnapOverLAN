@@ -179,8 +179,52 @@ const createUploadCompletedEvent = (req) => {
   };
 };
 
-const createApiRouter = ({ getServerStatus, onUploadCompleted = () => {} }) => {
+const createApiRouter = ({
+  getServerStatus,
+  getAutoCopySetting = null,
+  isLoopbackRequest = () => false,
+  onUploadCompleted = () => {},
+  setAutoCopySetting = null,
+}) => {
   const router = Router();
+
+  router.get('/auto-copy', async (req, res) => {
+    if (!isLoopbackRequest(req)) {
+      res.sendStatus(404);
+      return;
+    }
+    if (typeof getAutoCopySetting !== 'function') {
+      res.status(503).json({ error: 'Auto-copy control is unavailable.' });
+      return;
+    }
+
+    try {
+      res.json({ enabled: Boolean(await getAutoCopySetting()) });
+    } catch (err) {
+      res.status(503).json({ error: err.message || 'Auto-copy control is unavailable.' });
+    }
+  });
+
+  router.put('/auto-copy', async (req, res) => {
+    if (!isLoopbackRequest(req)) {
+      res.sendStatus(404);
+      return;
+    }
+    if (typeof req.body?.enabled !== 'boolean') {
+      res.status(400).json({ error: 'Expected { enabled: boolean }.' });
+      return;
+    }
+    if (typeof setAutoCopySetting !== 'function') {
+      res.status(503).json({ error: 'Auto-copy control is unavailable.' });
+      return;
+    }
+
+    try {
+      res.json({ enabled: Boolean(await setAutoCopySetting(req.body.enabled)) });
+    } catch (err) {
+      res.status(503).json({ error: err.message || 'Auto-copy control is unavailable.' });
+    }
+  });
 
   router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
     try {

@@ -216,9 +216,6 @@ const sendDesktopState = () => {
     mainWindow.webContents.send('desktop:state-changed', {
       server: getServerStatePayload(),
       backgroundMode,
-      autoCopyFirstPhoto,
-      autoCopyAvailable: Boolean(ownedServerProcess),
-      autoCopyUnavailableReason,
     });
   }
 };
@@ -340,8 +337,59 @@ const sendAutoCopyResult = (result) => {
   });
 };
 
+const sendAutoCopySettingResponse = (serverProcess, requestId, response) => {
+  if (
+    ownedServerProcess !== serverProcess
+    || !serverProcess.connected
+    || typeof requestId !== 'string'
+  ) {
+    return;
+  }
+
+  try {
+    serverProcess.send({
+      type: 'snapoverlan:auto-copy-response',
+      requestId,
+      ...response,
+    });
+  } catch (error) {
+    console.warn('Could not send the auto-copy setting response:', error);
+  }
+};
+
+const handleAutoCopySettingRequest = async (serverProcess, message) => {
+  if (
+    message?.type !== 'snapoverlan:auto-copy-request'
+    || typeof message.requestId !== 'string'
+    || !['get', 'set'].includes(message.operation)
+  ) {
+    return false;
+  }
+
+  try {
+    if (message.operation === 'set') {
+      if (typeof message.enabled !== 'boolean') {
+        throw new Error('Expected a boolean auto-copy setting.');
+      }
+      await setAutoCopyFirstPhoto(message.enabled);
+    }
+    sendAutoCopySettingResponse(serverProcess, message.requestId, {
+      enabled: autoCopyFirstPhoto,
+    });
+  } catch (error) {
+    sendAutoCopySettingResponse(serverProcess, message.requestId, {
+      error: error.message || 'Could not update the auto-copy setting.',
+    });
+  }
+  return true;
+};
+
 const handleOwnedServerMessage = async (serverProcess, message) => {
   if (ownedServerProcess !== serverProcess) {
+    return;
+  }
+
+  if (await handleAutoCopySettingRequest(serverProcess, message)) {
     return;
   }
 
@@ -957,8 +1005,6 @@ ipcMain.handle('server:get-state', () => getServerStatePayload());
 ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
-ipcMain.handle('auto-copy:get', () => autoCopyFirstPhoto);
-ipcMain.handle('auto-copy:set', (_event, enabled) => setAutoCopyFirstPhoto(enabled));
 
 const gotLock = electronApp.requestSingleInstanceLock();
 

@@ -29,17 +29,26 @@
   --radius-sm: 10px;
 }
 
-* { box-sizing: border-box; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 html {
+  width: 340px;
+  min-width: 340px;
+  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
 body {
-  width: 360px;
+  width: 340px;
+  min-width: 340px;
   margin: 0;
+  overflow-x: hidden;
   font-family: var(--font-ui);
   font-weight: var(--font-weight-body);
   font-synthesis: none;
@@ -56,10 +65,13 @@ textarea {
 }
 
 .popup-shell {
+  width: 340px;
+  min-width: 340px;
   padding: 12px;
 }
 
 .popup-panel {
+  width: 100%;
   background: linear-gradient(180deg, var(--panel), var(--panel-soft));
   border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: var(--radius-lg);
@@ -68,11 +80,9 @@ textarea {
 }
 
 .popup-header {
-  margin-bottom: 9px;
+  margin-bottom: 8px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
 }
 
 h1 {
@@ -102,6 +112,16 @@ h1 {
   color: #087c66;
 }
 
+.popup-controls {
+  width: 100%;
+  margin-bottom: 9px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 button {
   min-height: 34px;
   border: 1px solid rgba(13, 28, 38, 0.12);
@@ -129,11 +149,19 @@ button:disabled {
   transform: none;
 }
 
+#autoCopyToggleBtn,
 #refreshBtn {
+  flex: 0 0 auto;
   min-height: 30px;
   padding: 6px 10px;
   border-radius: 999px;
   white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
+
+#autoCopyToggleBtn[aria-pressed="true"] {
+  background: var(--dark-button);
+  color: #fff;
 }
 
 #status {

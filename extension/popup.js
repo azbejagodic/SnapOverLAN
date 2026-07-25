@@ -1,9 +1,13 @@
 const API_BASE_URL = 'http://localhost:8787';
 const REFRESH_INTERVAL_MS = 2000;
 
+const autoCopyToggleBtn = document.getElementById('autoCopyToggleBtn');
 const refreshBtn = document.getElementById('refreshBtn');
 const statusEl = document.getElementById('status');
 const gridEl = document.getElementById('grid');
+let autoCopyEnabled = false;
+let autoCopyRequestInFlight = false;
+let autoCopySettingLoaded = false;
 let latestImageSignature = '';
 let refreshInFlight = false;
 
@@ -25,6 +29,65 @@ async function ensureHostPermission(origin) {
   const granted = await chrome.permissions.request({ origins: [pattern] });
   if (!granted) {
     throw new Error(`Host permission denied for ${pattern}`);
+  }
+}
+
+function renderAutoCopyToggle() {
+  autoCopyToggleBtn.textContent = `Auto-copy: ${autoCopyEnabled ? 'On' : 'Off'}`;
+  autoCopyToggleBtn.disabled = autoCopyRequestInFlight || !autoCopySettingLoaded;
+  autoCopyToggleBtn.setAttribute('aria-pressed', String(autoCopyEnabled));
+  autoCopyToggleBtn.setAttribute(
+    'aria-label',
+    autoCopyEnabled
+      ? 'Turn automatic copying of the first uploaded photo off'
+      : 'Turn automatic copying of the first uploaded photo on',
+  );
+}
+
+async function requestAutoCopySetting(origin, method = 'GET', enabled) {
+  const requestOptions = { method };
+  if (method === 'PUT') {
+    requestOptions.headers = { 'Content-Type': 'application/json' };
+    requestOptions.body = JSON.stringify({ enabled });
+  }
+
+  let response;
+  try {
+    response = await fetch(`${origin}/api/auto-copy`, requestOptions);
+  } catch {
+    throw new Error('Could not connect to the desktop app.');
+  }
+
+  let json = null;
+  try {
+    json = await response.json();
+  } catch {}
+  if (!response.ok) {
+    throw new Error(json?.error || `Server returned ${response.status} for /api/auto-copy.`);
+  }
+  if (typeof json?.enabled !== 'boolean') {
+    throw new Error('Invalid auto-copy response from the desktop app.');
+  }
+  return json.enabled;
+}
+
+async function syncAutoCopySetting() {
+  if (autoCopyRequestInFlight) return;
+
+  autoCopyRequestInFlight = true;
+  renderAutoCopyToggle();
+  try {
+    const origin = API_BASE_URL;
+    await ensureHostPermission(origin);
+    autoCopyEnabled = await requestAutoCopySetting(origin);
+    autoCopySettingLoaded = true;
+    setStatus('', 'muted');
+  } catch (error) {
+    console.error('[popup] auto-copy read failed', error);
+    setStatus(error.message || 'Could not read the Auto-copy setting.', 'error');
+  } finally {
+    autoCopyRequestInFlight = false;
+    renderAutoCopyToggle();
   }
 }
 
@@ -277,11 +340,38 @@ async function init() {
 
   // Popup auto-refreshes on open so users immediately see latest images.
   await refresh({ showLoading: true, force: true });
+  await syncAutoCopySetting();
   setInterval(() => refresh(), REFRESH_INTERVAL_MS);
 }
 
-refreshBtn.addEventListener('click', () => refresh({ showLoading: true, force: true }));
-window.addEventListener('focus', () => refresh({ force: true }));
+autoCopyToggleBtn.addEventListener('click', async () => {
+  if (autoCopyRequestInFlight) return;
+
+  const nextEnabled = !autoCopyEnabled;
+  autoCopyRequestInFlight = true;
+  renderAutoCopyToggle();
+  try {
+    const origin = API_BASE_URL;
+    await ensureHostPermission(origin);
+    autoCopyEnabled = await requestAutoCopySetting(origin, 'PUT', nextEnabled);
+    autoCopySettingLoaded = true;
+    setStatus('', 'muted');
+  } catch (error) {
+    console.error('[popup] auto-copy update failed', error);
+    setStatus(error.message || 'Could not update the Auto-copy setting.', 'error');
+  } finally {
+    autoCopyRequestInFlight = false;
+    renderAutoCopyToggle();
+  }
+});
+refreshBtn.addEventListener('click', async () => {
+  await refresh({ showLoading: true, force: true });
+  await syncAutoCopySetting();
+});
+window.addEventListener('focus', () => {
+  refresh({ force: true });
+  syncAutoCopySetting();
+});
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     refresh({ force: true });

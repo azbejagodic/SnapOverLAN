@@ -104,7 +104,7 @@ The extension defaults to:
 http://localhost:8787
 ```
 
-When opened, it fetches the latest uploaded images. The Copy action converts the selected image to PNG and writes it to the clipboard so it can be pasted into ChatGPT or any compatible destination. The Open action opens the source image in a browser tab.
+When opened, it fetches the latest uploaded images and the desktop app's Auto-copy setting. The popup toggle controls whether the Electron main process automatically copies the first photo in a new upload. The Copy action converts a manually selected image to PNG and writes it to the clipboard so it can be pasted into ChatGPT or any compatible destination. The Open action opens the source image in a browser tab.
 
 ## Windows firewall
 
@@ -131,6 +131,8 @@ The App, PWA, and Extension use these internal local-server routes:
 
 - `POST /api/upload` - uploads a multipart media batch using field name `photos`
 - `GET /api/latest` - returns the current media batch
+- `GET /api/auto-copy` - reads the desktop Auto-copy setting (loopback only)
+- `PUT /api/auto-copy` - updates the desktop Auto-copy setting (loopback only)
 - `GET /api/phone-url` - returns detected LAN URLs for the App
 - `GET /api/server-status` - returns server and LAN diagnostics
 - `GET /files/<filename>` - serves an uploaded file

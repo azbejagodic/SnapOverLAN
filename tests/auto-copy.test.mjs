@@ -26,7 +26,10 @@ const {
 } = await import('../app/desktop-settings.js');
 const { createApiRouter } = await import('../app/server/routes/api.js');
 const { ensureStorageDirectories } = await import('../app/server/storage.js');
-const { sendUploadCompletedToParent } = await import('../app/server/index.js');
+const {
+  isLoopbackRequest,
+  sendUploadCompletedToParent,
+} = await import('../app/server/index.js');
 
 await ensureStorageDirectories();
 const fixtureDir = path.join(dataRoot, 'fixtures');
@@ -55,10 +58,17 @@ await Promise.all([
 ]);
 
 let completionHandler = () => {};
+let autoCopyApiSetting = false;
 const apiApp = express();
-apiApp.use('/api', createApiRouter({
+apiApp.use('/api', express.json(), createApiRouter({
+  getAutoCopySetting: () => autoCopyApiSetting,
   getServerStatus: () => ({ status: 'listening' }),
+  isLoopbackRequest: () => true,
   onUploadCompleted: (event) => completionHandler(event),
+  setAutoCopySetting: (enabled) => {
+    autoCopyApiSetting = enabled;
+    return autoCopyApiSetting;
+  },
 }));
 const server = await new Promise((resolve, reject) => {
   const instance = apiApp.listen(0, '127.0.0.1', () => resolve(instance));
@@ -147,6 +157,40 @@ test('saving auto-copy preserves the Background Mode setting', () => {
       autoCopyFirstPhoto: true,
     },
   );
+});
+
+test('loopback auto-copy API reads, validates, and updates the desktop setting bridge', async () => {
+  autoCopyApiSetting = false;
+  const initialResponse = await fetch(`http://127.0.0.1:${port}/api/auto-copy`);
+  assert.equal(initialResponse.status, 200);
+  assert.deepEqual(await initialResponse.json(), { enabled: false });
+
+  const updateResponse = await fetch(`http://127.0.0.1:${port}/api/auto-copy`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(updateResponse.status, 200);
+  assert.deepEqual(await updateResponse.json(), { enabled: true });
+  assert.equal(autoCopyApiSetting, true);
+
+  const invalidResponse = await fetch(`http://127.0.0.1:${port}/api/auto-copy`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: 'yes' }),
+  });
+  assert.equal(invalidResponse.status, 400);
+  assert.equal(autoCopyApiSetting, true);
+});
+
+test('auto-copy API loopback detection ignores forwarded addresses', () => {
+  assert.equal(isLoopbackRequest({ socket: { remoteAddress: '127.0.0.1' } }), true);
+  assert.equal(isLoopbackRequest({ socket: { remoteAddress: '::1' } }), true);
+  assert.equal(isLoopbackRequest({ socket: { remoteAddress: '::ffff:127.0.0.1' } }), true);
+  assert.equal(isLoopbackRequest({
+    socket: { remoteAddress: '192.168.1.25' },
+    headers: { 'x-forwarded-for': '127.0.0.1' },
+  }), false);
 });
 
 test('the upload route emits one event with the first image from an ordered mixed batch', async () => {
@@ -260,6 +304,59 @@ test('a real server child sends exactly one upload-completed event over IPC', as
   assert.equal(uploadMessages.length, 1, stderr);
   assert.match(uploadMessages[0].firstImage.name, /photo-001\.png$/);
   assert.equal(path.isAbsolute(uploadMessages[0].firstImage.path), true);
+
+  const exitPromise = new Promise((resolve) => child.once('exit', resolve));
+  child.send({ type: 'snapoverlan:shutdown' });
+  await exitPromise;
+});
+
+test('a real server child proxies auto-copy GET and PUT to its Electron parent', async (t) => {
+  const childPort = await getFreePort();
+  const childDataRoot = path.join(dataRoot, 'real-auto-copy-api-child');
+  const serverEntry = path.join(projectRoot, 'app', 'server', 'index.js');
+  let parentSetting = false;
+  const requests = [];
+  const child = spawn(process.execPath, [serverEntry], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      SNAPOVERLAN_PORT: String(childPort),
+      SNAPOVERLAN_DATA_DIR: childDataRoot,
+      SNAPOVERLAN_SERVER_SOURCE: 'auto-copy-api-ipc-test',
+    },
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+    windowsHide: true,
+  });
+  t.after(() => {
+    if (child.exitCode === null) child.kill();
+  });
+  child.on('message', (message) => {
+    if (message?.type !== 'snapoverlan:auto-copy-request') return;
+    requests.push(message);
+    if (message.operation === 'set') {
+      parentSetting = message.enabled;
+    }
+    child.send({
+      type: 'snapoverlan:auto-copy-response',
+      requestId: message.requestId,
+      enabled: parentSetting,
+    });
+  });
+
+  await waitForHttpServer(childPort);
+  const initialResponse = await fetch(`http://127.0.0.1:${childPort}/api/auto-copy`);
+  assert.equal(initialResponse.status, 200);
+  assert.deepEqual(await initialResponse.json(), { enabled: false });
+
+  const updateResponse = await fetch(`http://127.0.0.1:${childPort}/api/auto-copy`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true }),
+  });
+  assert.equal(updateResponse.status, 200);
+  assert.deepEqual(await updateResponse.json(), { enabled: true });
+  assert.equal(parentSetting, true);
+  assert.deepEqual(requests.map(({ operation }) => operation), ['get', 'set']);
 
   const exitPromise = new Promise((resolve) => child.once('exit', resolve));
   child.send({ type: 'snapoverlan:shutdown' });

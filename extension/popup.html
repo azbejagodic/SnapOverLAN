@@ -11,10 +11,13 @@
     <section class="popup-panel">
       <header class="popup-header">
         <h1 class="brand-lockup"><img class="brand-logo" src="icons/icon-48.png" alt="" /><span class="brand">SnapOver<span class="brand-lan">LAN</span></span></h1>
-        <button id="refreshBtn" type="button">Refresh</button>
       </header>
+      <div class="popup-controls">
+        <button id="autoCopyToggleBtn" type="button" aria-label="Turn automatic copying of the first uploaded photo on" aria-pressed="false" disabled>Auto-copy: Off</button>
+        <button id="refreshBtn" type="button">Refresh</button>
+      </div>
 
-      <div id="status" class="muted"></div>
+      <div id="status" class="muted" role="status" aria-live="polite"></div>
       <div id="grid"></div>
     </section>
   </main>

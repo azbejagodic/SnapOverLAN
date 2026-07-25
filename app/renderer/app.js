@@ -2,7 +2,6 @@ const refreshBtn = document.getElementById('refreshBtn');
 const qrBtn = document.getElementById('qrBtn');
 const connectionPill = document.getElementById('connectionPill');
 const backgroundToggleBtn = document.getElementById('backgroundToggleBtn');
-const autoCopyToggleBtn = document.getElementById('autoCopyToggleBtn');
 const autoCopyMessage = document.getElementById('autoCopyMessage');
 const retryServerBtn = document.getElementById('retryServerBtn');
 const serverStatusBadge = document.getElementById('serverStatusBadge');
@@ -109,10 +108,6 @@ let statusLastCheckedAt = null;
 let desktopServerState = 'offline';
 let serverRetryOperation = null;
 let backgroundModeEnabled = false;
-let autoCopyFirstPhotoEnabled = false;
-let autoCopyAvailable = false;
-let autoCopyUnavailableReason = '';
-let autoCopySettingOperation = null;
 let autoCopyMessageTimer = null;
 const launchParams = new URLSearchParams(window.location.search);
 const SERVER_ORIGIN = 'http://localhost:8787';
@@ -892,23 +887,6 @@ function renderDesktopControls() {
     );
   }
 
-  if (autoCopyToggleBtn) {
-    const autoCopyState = autoCopyFirstPhotoEnabled
-      ? autoCopyAvailable ? 'On' : 'Waiting'
-      : 'Off';
-    autoCopyToggleBtn.textContent = `Auto-copy: ${autoCopyState}`;
-    autoCopyToggleBtn.disabled = Boolean(autoCopySettingOperation);
-    autoCopyToggleBtn.setAttribute('aria-pressed', String(autoCopyFirstPhotoEnabled));
-    autoCopyToggleBtn.setAttribute(
-      'aria-label',
-      autoCopyFirstPhotoEnabled && !autoCopyAvailable
-        ? autoCopyUnavailableReason || 'Auto-copy is enabled and waiting for an owned server'
-        : autoCopyFirstPhotoEnabled
-        ? 'Turn automatic copying of the first uploaded photo off'
-        : 'Turn automatic copying of the first uploaded photo on',
-    );
-  }
-
   if (retryServerBtn) {
     retryServerBtn.hidden = desktopServerState !== 'error';
     retryServerBtn.disabled = Boolean(serverRetryOperation);
@@ -929,14 +907,11 @@ async function syncDesktopControls() {
   }
 
   try {
-    const [server, background, autoCopy] = await Promise.all([
+    const [server, background] = await Promise.all([
       window.snapOverLAN.getServerState(),
       window.snapOverLAN.getBackgroundMode(),
-      window.snapOverLAN.getAutoCopyFirstPhoto(),
     ]);
     backgroundModeEnabled = server?.state === 'online' && Boolean(background);
-    autoCopyFirstPhotoEnabled = Boolean(autoCopy);
-    autoCopyAvailable = Boolean(server?.owned);
     setDesktopServerState(server?.state);
     if (server?.state === 'error' && server.error) {
       renderStatus({ state: 'offline', message: server.error });
@@ -1969,25 +1944,6 @@ backgroundToggleBtn?.addEventListener('click', async () => {
   }
 });
 
-autoCopyToggleBtn?.addEventListener('click', async () => {
-  if (!window.snapOverLAN || autoCopySettingOperation) {
-    return;
-  }
-
-  autoCopySettingOperation = window.snapOverLAN.setAutoCopyFirstPhoto(
-    !autoCopyFirstPhotoEnabled,
-  );
-  renderDesktopControls();
-  try {
-    autoCopyFirstPhotoEnabled = await autoCopySettingOperation;
-  } catch (error) {
-    console.error('Could not change automatic clipboard copying:', error);
-  } finally {
-    autoCopySettingOperation = null;
-    renderDesktopControls();
-  }
-});
-
 qrBtn.addEventListener('click', openQrModal);
 
 closeQrBtn.addEventListener('click', closeQrModal);
@@ -2115,16 +2071,8 @@ syncDesktopControls();
 window.snapOverLAN?.onDesktopStateChanged?.(({
   server,
   backgroundMode,
-  autoCopyFirstPhoto,
-  autoCopyAvailable: nextAutoCopyAvailable,
-  autoCopyUnavailableReason: nextAutoCopyUnavailableReason,
 }) => {
   backgroundModeEnabled = server?.state === 'online' && Boolean(backgroundMode);
-  autoCopyFirstPhotoEnabled = Boolean(autoCopyFirstPhoto);
-  autoCopyAvailable = Boolean(nextAutoCopyAvailable);
-  autoCopyUnavailableReason = typeof nextAutoCopyUnavailableReason === 'string'
-    ? nextAutoCopyUnavailableReason
-    : '';
   setDesktopServerState(server?.state);
   if (server?.state === 'starting') {
     renderStatus({ state: 'checking', message: 'Starting the local server...' });

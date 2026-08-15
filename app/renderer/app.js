@@ -1,3 +1,7 @@
+import { drawQrCode } from './qr-code.js';
+import { fetchJson, fetchWithTimeout, serverUrl } from './server-api.js';
+import { createBatchHistory } from './batch-history.js';
+
 const refreshBtn = document.getElementById('refreshBtn');
 const qrBtn = document.getElementById('qrBtn');
 const connectionPill = document.getElementById('connectionPill');
@@ -49,14 +53,7 @@ const diagnosticsPanel = document.getElementById('diagnosticsPanel');
 const qrModal = document.getElementById('qrModal');
 const closeQrBtn = document.getElementById('closeQrBtn');
 
-const QR_VERSION = 2;
-const QR_SIZE = 17 + QR_VERSION * 4;
-const QR_DATA_CODEWORDS = 34;
-const QR_ECC_CODEWORDS = 10;
-const GF_EXP = [];
-const GF_LOG = [];
 const AUTO_REFRESH_MS = 5000;
-const MEDIA_REFRESH_TIMEOUT_MS = 10000;
 const UPLOAD_STATUS_REFRESH_MS = 750;
 const UPLOAD_LOADING_TIMEOUT_MS = 60000;
 const AUTO_COPY_MESSAGE_MS = 4000;
@@ -94,9 +91,7 @@ let uploadLoadingStartedAt = 0;
 let uploadLoadingTimedOut = false;
 let hasLoadedPhotos = false;
 let latestFiles = [];
-let savedBatches = [];
-let batchesRefreshPromise = null;
-let savedRetentionValue = null;
+let batchHistory = null;
 let currentPicturesPage = 0;
 let gridLayout = { ...DEFAULT_GRID_LAYOUT };
 let picturesView = localStorage.getItem(PICTURES_VIEW_KEY) === 'list' ? 'list' : 'grid';
@@ -110,344 +105,6 @@ let serverRetryOperation = null;
 let backgroundModeEnabled = false;
 let autoCopyMessageTimer = null;
 const launchParams = new URLSearchParams(window.location.search);
-const SERVER_ORIGIN = 'http://localhost:8787';
-
-function serverUrl(resourcePath) {
-  return new URL(resourcePath, SERVER_ORIGIN).toString();
-}
-
-function initGaloisTables() {
-  let value = 1;
-  for (let i = 0; i < 255; i += 1) {
-    GF_EXP[i] = value;
-    GF_LOG[value] = i;
-    value <<= 1;
-    if (value & 0x100) {
-      value ^= 0x11d;
-    }
-  }
-
-  for (let i = 255; i < 512; i += 1) {
-    GF_EXP[i] = GF_EXP[i - 255];
-  }
-}
-
-function gfMultiply(a, b) {
-  if (a === 0 || b === 0) {
-    return 0;
-  }
-  return GF_EXP[GF_LOG[a] + GF_LOG[b]];
-}
-
-function getUtf8Bytes(text) {
-  if (window.TextEncoder) {
-    return Array.from(new TextEncoder().encode(text));
-  }
-
-  return Array.from(unescape(encodeURIComponent(text))).map((char) => char.charCodeAt(0));
-}
-
-function appendBits(target, value, length) {
-  for (let i = length - 1; i >= 0; i -= 1) {
-    target.push(((value >>> i) & 1) === 1);
-  }
-}
-
-function createDataCodewords(text) {
-  const bytes = getUtf8Bytes(text);
-  if (bytes.length > 32) {
-    throw new Error('Phone URL is too long for the built-in QR code.');
-  }
-
-  const bits = [];
-  appendBits(bits, 0x4, 4);
-  appendBits(bits, bytes.length, 8);
-  bytes.forEach((byte) => appendBits(bits, byte, 8));
-
-  const maxBits = QR_DATA_CODEWORDS * 8;
-  const terminatorLength = Math.min(4, maxBits - bits.length);
-  appendBits(bits, 0, terminatorLength);
-
-  while (bits.length % 8 !== 0) {
-    bits.push(false);
-  }
-
-  const codewords = [];
-  for (let i = 0; i < bits.length; i += 8) {
-    let value = 0;
-    for (let j = 0; j < 8; j += 1) {
-      value = (value << 1) | (bits[i + j] ? 1 : 0);
-    }
-    codewords.push(value);
-  }
-
-  const pads = [0xec, 0x11];
-  for (let i = 0; codewords.length < QR_DATA_CODEWORDS; i += 1) {
-    codewords.push(pads[i % 2]);
-  }
-
-  return codewords;
-}
-
-function reedSolomonRemainder(data, degree) {
-  const coefficients = new Array(degree).fill(0);
-  coefficients[degree - 1] = 1;
-
-  let root = 1;
-  for (let i = 0; i < degree; i += 1) {
-    for (let j = 0; j < degree; j += 1) {
-      coefficients[j] = gfMultiply(coefficients[j], root);
-      if (j + 1 < degree) {
-        coefficients[j] ^= coefficients[j + 1];
-      }
-    }
-    root = gfMultiply(root, 0x02);
-  }
-
-  const result = new Array(degree).fill(0);
-  data.forEach((value) => {
-    const factor = value ^ result.shift();
-    result.push(0);
-    for (let i = 0; i < degree; i += 1) {
-      result[i] ^= gfMultiply(coefficients[i], factor);
-    }
-  });
-
-  return result;
-}
-
-function maskCondition(mask, x, y) {
-  switch (mask) {
-    case 0: return (x + y) % 2 === 0;
-    case 1: return y % 2 === 0;
-    case 2: return x % 3 === 0;
-    case 3: return (x + y) % 3 === 0;
-    case 4: return (Math.floor(y / 2) + Math.floor(x / 3)) % 2 === 0;
-    case 5: return ((x * y) % 2) + ((x * y) % 3) === 0;
-    case 6: return (((x * y) % 2) + ((x * y) % 3)) % 2 === 0;
-    case 7: return (((x + y) % 2) + ((x * y) % 3)) % 2 === 0;
-    default: return false;
-  }
-}
-
-function createBaseMatrix() {
-  const modules = Array.from({ length: QR_SIZE }, () => new Array(QR_SIZE).fill(false));
-  const reserved = Array.from({ length: QR_SIZE }, () => new Array(QR_SIZE).fill(false));
-
-  const setFunction = (x, y, dark) => {
-    if (x < 0 || y < 0 || x >= QR_SIZE || y >= QR_SIZE) {
-      return;
-    }
-    modules[y][x] = dark;
-    reserved[y][x] = true;
-  };
-
-  const drawFinder = (left, top) => {
-    for (let y = -1; y <= 7; y += 1) {
-      for (let x = -1; x <= 7; x += 1) {
-        setFunction(left + x, top + y, false);
-      }
-    }
-
-    for (let y = 0; y < 7; y += 1) {
-      for (let x = 0; x < 7; x += 1) {
-        const edge = x === 0 || y === 0 || x === 6 || y === 6;
-        const center = x >= 2 && x <= 4 && y >= 2 && y <= 4;
-        setFunction(left + x, top + y, edge || center);
-      }
-    }
-  };
-
-  const drawAlignment = (centerX, centerY) => {
-    for (let y = -2; y <= 2; y += 1) {
-      for (let x = -2; x <= 2; x += 1) {
-        const distance = Math.max(Math.abs(x), Math.abs(y));
-        setFunction(centerX + x, centerY + y, distance === 0 || distance === 2);
-      }
-    }
-  };
-
-  drawFinder(0, 0);
-  drawFinder(QR_SIZE - 7, 0);
-  drawFinder(0, QR_SIZE - 7);
-  drawAlignment(18, 18);
-
-  for (let i = 8; i < QR_SIZE - 8; i += 1) {
-    const dark = i % 2 === 0;
-    setFunction(i, 6, dark);
-    setFunction(6, i, dark);
-  }
-
-  for (let i = 0; i < 9; i += 1) {
-    if (i !== 6) {
-      setFunction(8, i, false);
-      setFunction(i, 8, false);
-    }
-  }
-
-  for (let i = 0; i < 8; i += 1) {
-    setFunction(QR_SIZE - 1 - i, 8, false);
-    setFunction(8, QR_SIZE - 1 - i, false);
-  }
-
-  setFunction(8, QR_SIZE - 8, true);
-  return { modules, reserved };
-}
-
-function drawFormatBits(modules, mask) {
-  const data = (1 << 3) | mask;
-  let remainder = data;
-  for (let i = 0; i < 10; i += 1) {
-    remainder = (remainder << 1) ^ ((remainder >>> 9) * 0x537);
-  }
-
-  const bits = ((data << 10) | remainder) ^ 0x5412;
-  const getBit = (index) => ((bits >>> index) & 1) === 1;
-  const set = (x, y, dark) => {
-    modules[y][x] = dark;
-  };
-
-  for (let i = 0; i <= 5; i += 1) {
-    set(8, i, getBit(i));
-  }
-  set(8, 7, getBit(6));
-  set(8, 8, getBit(7));
-  set(7, 8, getBit(8));
-  for (let i = 9; i < 15; i += 1) {
-    set(14 - i, 8, getBit(i));
-  }
-
-  for (let i = 0; i < 8; i += 1) {
-    set(QR_SIZE - 1 - i, 8, getBit(i));
-  }
-  for (let i = 8; i < 15; i += 1) {
-    set(8, QR_SIZE - 15 + i, getBit(i));
-  }
-  set(8, QR_SIZE - 8, true);
-}
-
-function drawCodewords(codewords, mask) {
-  const { modules, reserved } = createBaseMatrix();
-  const bits = [];
-  codewords.forEach((codeword) => appendBits(bits, codeword, 8));
-
-  let bitIndex = 0;
-  let upward = true;
-  for (let right = QR_SIZE - 1; right >= 1; right -= 2) {
-    if (right === 6) {
-      right -= 1;
-    }
-
-    for (let vertical = 0; vertical < QR_SIZE; vertical += 1) {
-      const y = upward ? QR_SIZE - 1 - vertical : vertical;
-      for (let offset = 0; offset < 2; offset += 1) {
-        const x = right - offset;
-        if (reserved[y][x]) {
-          continue;
-        }
-
-        const bit = bitIndex < bits.length ? bits[bitIndex] : false;
-        bitIndex += 1;
-        modules[y][x] = bit !== maskCondition(mask, x, y);
-      }
-    }
-    upward = !upward;
-  }
-
-  drawFormatBits(modules, mask);
-  return modules;
-}
-
-function getRunPenalty(values) {
-  let penalty = 0;
-  let runColor = values[0];
-  let runLength = 1;
-
-  for (let i = 1; i < values.length; i += 1) {
-    if (values[i] === runColor) {
-      runLength += 1;
-      continue;
-    }
-
-    if (runLength >= 5) {
-      penalty += 3 + runLength - 5;
-    }
-    runColor = values[i];
-    runLength = 1;
-  }
-
-  if (runLength >= 5) {
-    penalty += 3 + runLength - 5;
-  }
-
-  return penalty;
-}
-
-function getPenaltyScore(modules) {
-  let penalty = 0;
-  for (let y = 0; y < QR_SIZE; y += 1) {
-    penalty += getRunPenalty(modules[y]);
-  }
-
-  for (let x = 0; x < QR_SIZE; x += 1) {
-    const column = [];
-    for (let y = 0; y < QR_SIZE; y += 1) {
-      column.push(modules[y][x]);
-    }
-    penalty += getRunPenalty(column);
-  }
-
-  for (let y = 0; y < QR_SIZE - 1; y += 1) {
-    for (let x = 0; x < QR_SIZE - 1; x += 1) {
-      const color = modules[y][x];
-      if (modules[y][x + 1] === color && modules[y + 1][x] === color && modules[y + 1][x + 1] === color) {
-        penalty += 3;
-      }
-    }
-  }
-
-  return penalty;
-}
-
-function createQrMatrix(text) {
-  const dataCodewords = createDataCodewords(text);
-  const errorCodewords = reedSolomonRemainder(dataCodewords, QR_ECC_CODEWORDS);
-  const codewords = dataCodewords.concat(errorCodewords);
-  let best = null;
-
-  for (let mask = 0; mask < 8; mask += 1) {
-    const modules = drawCodewords(codewords, mask);
-    const penalty = getPenaltyScore(modules);
-    if (!best || penalty < best.penalty) {
-      best = { modules, penalty };
-    }
-  }
-
-  return best.modules;
-}
-
-function drawQrCode(canvas, text) {
-  const modules = createQrMatrix(text);
-  const quietZone = 4;
-  const scale = 8;
-  const size = (modules.length + quietZone * 2) * scale;
-  const context = canvas.getContext('2d');
-
-  canvas.width = size;
-  canvas.height = size;
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, size, size);
-  context.fillStyle = '#111827';
-
-  for (let y = 0; y < modules.length; y += 1) {
-    for (let x = 0; x < modules.length; x += 1) {
-      if (modules[y][x]) {
-        context.fillRect((x + quietZone) * scale, (y + quietZone) * scale, scale, scale);
-      }
-    }
-  }
-}
-
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) {
     return 'Unknown size';
@@ -596,37 +253,8 @@ async function downloadAllPictures() {
   }
 }
 
-function formatBatchZipName(batchTimestamp) {
-  const date = batchTimestamp ? new Date(batchTimestamp) : new Date();
-  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
-  const year = safeDate.getFullYear();
-  const month = String(safeDate.getMonth() + 1).padStart(2, '0');
-  const day = String(safeDate.getDate()).padStart(2, '0');
-  const hours = String(safeDate.getHours()).padStart(2, '0');
-  const minutes = String(safeDate.getMinutes()).padStart(2, '0');
-  const seconds = String(safeDate.getSeconds()).padStart(2, '0');
-
-  return `snapoverlan_${year}-${month}-${day}_${hours}-${minutes}-${seconds}_batch.zip`;
-}
-
 async function getCurrentBatchZipName() {
-  let currentBatch = savedBatches.find((batch) => batch.current);
-
-  if (!currentBatch) {
-    try {
-      const batchData = await fetchJson('/api/batches');
-      const batches = Array.isArray(batchData.batches) ? batchData.batches : [];
-      currentBatch = batches.find((batch) => batch.current);
-      if (batches.length) {
-        savedBatches = batches;
-        renderBatches();
-      }
-    } catch {
-      // Fall back to the current local time if batch metadata is unavailable.
-    }
-  }
-
-  return formatBatchZipName(currentBatch?.createdAt);
+  return batchHistory.getCurrentBatchZipName();
 }
 
 function setPicturesMessage(message) {
@@ -639,221 +267,6 @@ function clearPicturesMessage() {
   picturesMessage.textContent = '';
   picturesMessage.hidden = true;
   picturesMessage.classList.remove('error');
-}
-
-function formatBatchDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return 'Unknown time';
-  }
-
-  return date.toLocaleString([], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-async function fetchJson(resourcePath, options = {}) {
-  const response = await fetch(serverUrl(resourcePath), options);
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`;
-    try {
-      const data = await response.json();
-      if (data?.error) {
-        message = data.error;
-      }
-    } catch {
-      // Keep the status-based message when the response is not JSON.
-    }
-    throw new Error(message);
-  }
-  return response.json();
-}
-
-function renderBatches() {
-  if (!batchesList) {
-    return;
-  }
-
-  batchesList.textContent = '';
-
-  if (!savedBatches.length) {
-    const empty = document.createElement('p');
-    empty.className = 'batches-empty';
-    empty.textContent = 'No saved batches.';
-    batchesList.appendChild(empty);
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  savedBatches.forEach((batch) => {
-    const item = document.createElement('article');
-    item.className = batch.current ? 'batch-item current' : 'batch-item';
-
-    const details = document.createElement('div');
-    details.className = 'batch-details';
-
-    const title = document.createElement('strong');
-    title.textContent = formatBatchDate(batch.createdAt);
-
-    const meta = document.createElement('span');
-    const countLabel = batch.fileCount === 1 ? '1 file' : `${batch.fileCount} files`;
-    meta.textContent = `${countLabel} · ${formatBytes(batch.totalSize)}${batch.current ? ' · Current' : ''}`;
-
-    details.append(title, meta);
-
-    const actions = document.createElement('div');
-    actions.className = 'batch-actions';
-
-    const selectButton = document.createElement('button');
-    selectButton.className = 'batch-button';
-    selectButton.type = 'button';
-    selectButton.textContent = batch.current ? 'Selected' : 'Select';
-    selectButton.disabled = batch.current;
-    selectButton.addEventListener('click', () => selectBatch(batch.id));
-
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'batch-button danger';
-    deleteButton.type = 'button';
-    deleteButton.textContent = 'Delete';
-    deleteButton.addEventListener('click', () => deleteBatch(batch));
-
-    actions.append(selectButton, deleteButton);
-    item.append(details, actions);
-    fragment.appendChild(item);
-  });
-
-  batchesList.appendChild(fragment);
-}
-
-function normalizeRetentionValue(value) {
-  return value ? String(value) : '';
-}
-
-function updateRetentionSaveButton() {
-  if (!retentionSelect || !saveRetentionBtn) {
-    return;
-  }
-
-  saveRetentionBtn.disabled = savedRetentionValue !== null
-    && retentionSelect.value === savedRetentionValue;
-}
-
-async function loadBatchHistory({ showActivity = false } = {}) {
-  if (!batchesPanel || batchesPanel.hidden) {
-    return;
-  }
-
-  if (batchesRefreshPromise) {
-    return batchesRefreshPromise;
-  }
-
-  batchesRefreshPromise = (async () => {
-    try {
-      const [batchData, settings] = await Promise.all([
-        fetchJson('/api/batches'),
-        fetchJson('/api/storage-settings'),
-      ]);
-
-      savedBatches = Array.isArray(batchData.batches) ? batchData.batches : [];
-      if (retentionSelect) {
-        const loadedRetentionValue = normalizeRetentionValue(settings.retentionDays);
-        if (savedRetentionValue === null || retentionSelect.value === savedRetentionValue) {
-          retentionSelect.value = loadedRetentionValue;
-        }
-        savedRetentionValue = loadedRetentionValue;
-        updateRetentionSaveButton();
-      }
-      renderBatches();
-    } catch (error) {
-      setPicturesMessage(error.message || 'Could not load batches.');
-    } finally {
-      batchesRefreshPromise = null;
-    }
-  })();
-
-  return batchesRefreshPromise;
-}
-
-async function selectBatch(id) {
-  try {
-    await fetchJson(`/api/batches/${encodeURIComponent(id)}/select`, { method: 'POST' });
-    await loadLatestPictures({ source: 'manual', force: true });
-    await loadBatchHistory();
-    clearPicturesMessage();
-  } catch (error) {
-    setPicturesMessage(error.message || 'Could not select batch.');
-  }
-}
-
-async function deleteBatch(batch) {
-  const label = formatBatchDate(batch.createdAt);
-  if (!window.confirm(`Delete the batch from ${label}?`)) {
-    return;
-  }
-
-  try {
-    await fetchJson(`/api/batches/${encodeURIComponent(batch.id)}`, { method: 'DELETE' });
-    await loadLatestPictures({ source: 'manual', force: true });
-    await loadBatchHistory();
-    clearPicturesMessage();
-  } catch (error) {
-    setPicturesMessage(error.message || 'Could not delete batch.');
-  }
-}
-
-async function clearAllBatches() {
-  if (!window.confirm('Clear all saved batches? This cannot be undone.')) {
-    return;
-  }
-
-  try {
-    await fetchJson('/api/batches', { method: 'DELETE' });
-    await loadLatestPictures({ source: 'manual', force: true });
-    await loadBatchHistory();
-    clearPicturesMessage();
-  } catch (error) {
-    setPicturesMessage(error.message || 'Could not clear batches.');
-  }
-}
-
-async function saveRetentionSetting() {
-  try {
-    const value = retentionSelect?.value || '';
-    const settings = await fetchJson('/api/storage-settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ retentionDays: value ? Number(value) : null }),
-    });
-    savedRetentionValue = normalizeRetentionValue(settings.retentionDays);
-    updateRetentionSaveButton();
-    await loadBatchHistory();
-    clearPicturesMessage();
-  } catch (error) {
-    setPicturesMessage(error.message || 'Could not save retention setting.');
-  }
-}
-
-function setBatchHistoryOpen(isOpen) {
-  if (!batchesPanel) {
-    return;
-  }
-
-  batchesPanel.hidden = !isOpen;
-  picturesPanel?.classList.toggle('history-open', isOpen);
-  applyGridLayout();
-  batchesBtn?.classList.toggle('active', isOpen);
-  if (isOpen) {
-    loadBatchHistory({ showActivity: true });
-    closeBatchesBtn?.focus();
-  } else {
-    batchesBtn?.focus();
-  }
-  if (picturesView === 'grid') {
-    renderPictures(latestFiles);
-  }
 }
 
 function setBadge(element, baseClass, state, label, labelElement = null) {
@@ -1219,34 +632,6 @@ async function waitForMinimumLoadingTime(startedAt, minimumMs = 400) {
   const remaining = Math.max(0, minimumMs - elapsed);
   if (remaining > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, remaining));
-  }
-}
-
-async function fetchWithTimeout(url, options = {}, timeoutMs = MEDIA_REFRESH_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
-  const externalSignal = options.signal;
-
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      controller.abort();
-    } else {
-      externalSignal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
-  }
-
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error('Could not load media. Try Refresh again.');
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
   }
 }
 
@@ -1733,7 +1118,7 @@ async function refreshDashboard({ source = 'manual' } = {}) {
       loadServerStatus({ showActivity }),
       loadPhoneSetup({ showActivity }),
       loadLatestPictures({ source }),
-      loadBatchHistory(),
+      batchHistory.load(),
     ]);
   } finally {
     dashboardRefreshInFlight = false;
@@ -1888,9 +1273,29 @@ function handleGridResize() {
   }
 }
 
-initGaloisTables();
 renderStatus({ state: 'checking', message: 'Checking the local server...' });
 renderQrCode('');
+
+batchHistory = createBatchHistory({
+  batchesButton: batchesBtn,
+  batchesList,
+  clearButton: clearBatchesBtn,
+  clearMessage: clearPicturesMessage,
+  closeButton: closeBatchesBtn,
+  fetchJson,
+  formatBytes,
+  onBatchesChanged: () => loadLatestPictures({ source: 'manual', force: true }),
+  onLayoutChanged: () => {
+    applyGridLayout();
+    if (picturesView === 'grid') renderPictures(latestFiles);
+  },
+  panel: batchesPanel,
+  picturesPanel,
+  retentionSelect,
+  saveButton: saveRetentionBtn,
+  setMessage: setPicturesMessage,
+});
+batchHistory.bind();
 
 refreshBtn.addEventListener('click', () => {
   refreshDashboard({ source: 'manual' });
@@ -1957,11 +1362,6 @@ document.addEventListener('keydown', (event) => {
 });
 
 downloadAllBtn.addEventListener('click', downloadAllPictures);
-batchesBtn?.addEventListener('click', () => setBatchHistoryOpen(true));
-closeBatchesBtn?.addEventListener('click', () => setBatchHistoryOpen(false));
-saveRetentionBtn?.addEventListener('click', saveRetentionSetting);
-retentionSelect?.addEventListener('change', updateRetentionSaveButton);
-clearBatchesBtn?.addEventListener('click', clearAllBatches);
 gridCountSelect?.addEventListener('change', () => {
   if (!GRID_COUNT_OPTIONS.includes(gridCountSelect.value)) {
     return;

@@ -11,12 +11,47 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(testDir, '..');
 const serverEntry = path.join(projectRoot, 'app', 'server', 'index.js');
 const mainSource = await readFile(path.join(projectRoot, 'app', 'main.js'), 'utf8');
+const desktopServerClientSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'server-client.js'),
+  'utf8',
+);
+const desktopServerManagerSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'server-manager.js'),
+  'utf8',
+);
+const desktopSettingsStoreSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'settings-store.js'),
+  'utf8',
+);
+const desktopAutoCopyControllerSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'auto-copy-controller.js'),
+  'utf8',
+);
+const desktopShellSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'shell.js'),
+  'utf8',
+);
 const serverSource = await readFile(serverEntry, 'utf8');
-const apiSource = await readFile(path.join(projectRoot, 'app', 'server', 'routes', 'api.js'), 'utf8');
+const parentBridgeSource = await readFile(
+  path.join(projectRoot, 'app', 'server', 'parent-bridge.js'),
+  'utf8',
+);
+const uploadsRouteSource = await readFile(
+  path.join(projectRoot, 'app', 'server', 'routes', 'uploads.js'),
+  'utf8',
+);
+const systemRouteSource = await readFile(
+  path.join(projectRoot, 'app', 'server', 'routes', 'system.js'),
+  'utf8',
+);
 const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'), 'utf8');
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
 const rendererSource = await readFile(path.join(projectRoot, 'app', 'renderer', 'app.js'), 'utf8');
+const rendererBatchHistorySource = await readFile(
+  path.join(projectRoot, 'app', 'renderer', 'batch-history.js'),
+  'utf8',
+);
 const extensionMarkup = await readFile(path.join(projectRoot, 'extension', 'popup.html'), 'utf8');
 const extensionSource = await readFile(path.join(projectRoot, 'extension', 'popup.js'), 'utf8');
 const rendererFont = await readFile(path.join(
@@ -30,7 +65,7 @@ const packageConfig = JSON.parse(await readFile(path.join(projectRoot, 'package.
 const requestQuitStart = mainSource.indexOf('async function requestQuit()');
 const requestQuitEnd = mainSource.indexOf("ipcMain.handle('server:get-state'", requestQuitStart);
 const requestQuitSource = mainSource.slice(requestQuitStart, requestQuitEnd);
-const windowCloseSource = mainSource.match(
+const windowCloseSource = desktopShellSource.match(
   /mainWindow\.on\('close',[\s\S]*?mainWindow\.on\('closed'/,
 )?.[0];
 
@@ -81,10 +116,10 @@ function waitForExit(child, timeoutMs = 5000) {
 }
 
 test('preload exposes only narrow server, background, and auto-copy result methods', () => {
-  assert.match(mainSource, /preload:\s*preloadPath/);
-  assert.match(mainSource, /contextIsolation:\s*true/);
-  assert.match(mainSource, /nodeIntegration:\s*false/);
-  assert.match(mainSource, /sandbox:\s*true/);
+  assert.match(desktopShellSource, /preload:\s*preloadPath/);
+  assert.match(desktopShellSource, /contextIsolation:\s*true/);
+  assert.match(desktopShellSource, /nodeIntegration:\s*false/);
+  assert.match(desktopShellSource, /sandbox:\s*true/);
   assert.match(preloadSource, /getServerState/);
   assert.match(preloadSource, /retryServer/);
   assert.doesNotMatch(preloadSource, /startServer|stopServer|server:start|server:stop/);
@@ -116,7 +151,8 @@ test('picture Copy sends image bytes to main and never falls back to URL text', 
     /await copyImage\(mediaUrl\);[\s\S]*?setPicturesMessage\(error\.message \|\| 'Could not copy image\.'\)/,
   );
   assert.match(mainSource, /ipcMain\.handle\('image:copy'/);
-  assert.match(mainSource, /event\.sender !== mainWindow\.webContents/);
+  assert.match(mainSource, /desktopShell\.isMainWindowSender\(event\.sender\)/);
+  assert.match(desktopShellSource, /sender === mainWindow\.webContents/);
   assert.match(mainSource, /copyImageBytesToClipboard\(\{/);
   assert.match(mainSource, /nativeImage\.createFromBuffer\(buffer\)/);
   assert.match(mainSource, /clipboard\.writeImage\(image\)/);
@@ -125,7 +161,7 @@ test('picture Copy sends image bytes to main and never falls back to URL text', 
 test('background mode is limited to an online server', () => {
   assert.match(mainSource, /serverState !== 'online' && backgroundMode/);
   assert.match(mainSource, /nextValue && serverState !== 'online'/);
-  assert.match(mainSource, /label: `Background Mode:[\s\S]*?enabled: serverIsRunning/);
+  assert.match(desktopShellSource, /label: `Background Mode:[\s\S]*?enabled: getServerOnline\(\)/);
   assert.match(rendererSource, /backgroundToggleBtn\.disabled = desktopServerState !== 'online'/);
   assert.match(rendererSource, /desktopServerState !== 'online'[\s\S]*?backgroundModeEnabled = false/);
 });
@@ -134,16 +170,17 @@ test('closing with Background Mode off quits and stops the server', () => {
   assert.notEqual(requestQuitStart, -1);
   assert.notEqual(requestQuitEnd, -1);
   assert.ok(windowCloseSource);
-  assert.match(windowCloseSource, /requestQuit\(\)/);
+  assert.match(windowCloseSource, /onQuit\(\)/);
+  assert.match(mainSource, /onQuit: \(\) => requestQuit\(\)/);
   assert.match(
     requestQuitSource,
-    /serverLaunchMode !== 'offline' \|\| ownedServerProcess[\s\S]*?await stopServer\(\)/,
+    /serverManager\.isRunning\(\)[\s\S]*?await stopServer\(\)/,
   );
 });
 
 test('closing with Background Mode on hides the window and keeps the server alive', () => {
   assert.ok(windowCloseSource);
-  assert.match(windowCloseSource, /if \(backgroundMode\) \{[\s\S]*?mainWindow\.hide\(\)[\s\S]*?return/);
+  assert.match(windowCloseSource, /if \(getBackgroundMode\(\)\) \{[\s\S]*?mainWindow\.hide\(\)[\s\S]*?return/);
 });
 
 test('tray Quit, before-quit, and repeated quits share one shutdown path', () => {
@@ -152,23 +189,24 @@ test('tray Quit, before-quit, and repeated quits share one shutdown path', () =>
     requestQuitSource,
     /if \(quitOperation\) \{[\s\S]*?return quitOperation/,
   );
-  assert.match(mainSource, /label: 'Quit',[\s\S]*?click: \(\) => requestQuit\(\)/);
+  assert.match(desktopShellSource, /label: 'Quit', click: onQuit/);
+  assert.match(mainSource, /onQuit: \(\) => requestQuit\(\)/);
   assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?requestQuit\(\)/);
   assert.doesNotMatch(mainSource, /label: (?:serverIsRunning \? )?'(?:Start|Stop) Server/);
 });
 
 test('unrelated processes are never killed; only verified SnapOverLAN servers receive shutdown', () => {
-  assert.match(mainSource, /control\?\.service !== SERVER_CONTROL_ID/);
-  assert.match(mainSource, /'x-snapoverlan-shutdown-token': token/);
+  assert.match(desktopServerClientSource, /control\?\.service !== SERVER_CONTROL_ID/);
+  assert.match(desktopServerClientSource, /'x-snapoverlan-shutdown-token': token/);
   assert.match(
-    mainSource,
+    desktopServerManagerSource,
     /if \(!identity && !serverProcess\)[\s\S]*?not a verified SnapOverLAN server/,
   );
-  assert.match(mainSource, /if \(!exited && serverProcess\?\.exitCode === null\)/);
+  assert.match(desktopServerManagerSource, /if \(!exited && serverProcess\?\.exitCode === null\)/);
   assert.match(serverSource, /const isLoopbackRequest[\s\S]*?remoteAddress/);
-  assert.match(serverSource, /crypto\.timingSafeEqual/);
-  assert.match(serverSource, /shutdownServer\('localhost-control'\)/);
-  assert.doesNotMatch(mainSource, /Leaving the externally managed SnapOverLAN server running/);
+  assert.match(systemRouteSource, /crypto\.timingSafeEqual/);
+  assert.match(systemRouteSource, /onShutdown\('localhost-control'\)/);
+  assert.doesNotMatch(desktopServerManagerSource, /Leaving the externally managed SnapOverLAN server running/);
 });
 
 test('server identity contract recognizes current, legacy, and unrelated responses', () => {
@@ -202,21 +240,21 @@ test('server identity contract recognizes current, legacy, and unrelated respons
     uploadTempDir: 'upload-tmp',
     pid: 123,
   }), 'unrelated');
-  assert.match(mainSource, /An older SnapOverLAN server is running\. Stop it once and restart the app\./);
-  assert.match(mainSource, /if \(existingIdentity\?\.shutdownToken\)/);
+  assert.match(desktopServerManagerSource, /An older SnapOverLAN server is running\. Stop it once and restart the app\./);
+  assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.shutdownToken\)/);
 });
 
 test('server startup is mandatory, awaited, and cannot start a duplicate', () => {
-  assert.match(mainSource, /show: false/);
+  assert.match(desktopShellSource, /show: false/);
   assert.match(
     mainSource,
-    /await createWindow\(\);[\s\S]*?await startServer\(\)\.catch[\s\S]*?showMainWindow\(\)/,
+    /await desktopShell\.createWindow\(\);[\s\S]*?await startServer\(\)\.catch[\s\S]*?desktopShell\.showMainWindow\(\)/,
   );
   assert.match(
-    mainSource,
-    /if \(serverOperationType === 'start'\) \{[\s\S]*?return serverOperation/,
+    desktopServerManagerSource,
+    /if \(serverOperationType === 'start'\) return serverOperation/,
   );
-  assert.match(mainSource, /if \(existingIdentity\?\.shutdownToken\)[\s\S]*?serverLaunchMode = 'reused'/);
+  assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.shutdownToken\)[\s\S]*?serverLaunchMode = 'reused'/);
   assert.doesNotMatch(mainSource, /serverAutoStart/);
 });
 
@@ -235,7 +273,8 @@ test('desktop settings persist Background Mode and auto-copy with safe migration
   assert.doesNotMatch(mainSource, /serverAutoStart/);
   assert.match(mainSource, /normalizeDesktopSettings/);
   assert.match(mainSource, /autoCopyFirstPhoto/);
-  assert.match(mainSource, /JSON\.stringify\(getDesktopSettings\(\)/);
+  assert.match(mainSource, /settingsStore\.save\(getDesktopSettings\(\)/);
+  assert.match(desktopSettingsStoreSource, /JSON\.stringify\(normalizeDesktopSettings\(settings\)/);
   assert.match(mainSource, /updateDesktopSetting\(previousSettings, 'backgroundMode'/);
   assert.match(mainSource, /updateDesktopSetting\(previousSettings, 'autoCopyFirstPhoto'/);
 });
@@ -245,8 +284,8 @@ test('disabling Background Mode restores the window without stopping the server'
     /async function setBackgroundMode[\s\S]*?\n\}/,
   )?.[0];
   assert.ok(backgroundModeSource);
-  assert.match(backgroundModeSource, /if \(backgroundMode\) \{[\s\S]*?createTray\(\)/);
-  assert.match(backgroundModeSource, /else \{[\s\S]*?await openMainWindow\(\);[\s\S]*?destroyTray\(\)/);
+  assert.match(backgroundModeSource, /if \(backgroundMode\) \{[\s\S]*?desktopShell\.createTray\(\)/);
+  assert.match(backgroundModeSource, /else \{[\s\S]*?await desktopShell\.openMainWindow\(\);[\s\S]*?desktopShell\.destroyTray\(\)/);
   assert.doesNotMatch(backgroundModeSource, /stopServer\(/);
 });
 
@@ -263,7 +302,7 @@ test('header controls are compact, accessible, and preserve existing actions', (
 });
 
 test('auto-copy uses one validated owned-server IPC path and never gallery refreshes', () => {
-  const selectBatchSource = rendererSource.match(
+  const selectBatchSource = rendererBatchHistorySource.match(
     /async function selectBatch[\s\S]*?\n\}/,
   )?.[0];
   const loadLatestPicturesSource = rendererSource.match(
@@ -271,22 +310,23 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
   )?.[0];
   assert.ok(selectBatchSource);
   assert.ok(loadLatestPicturesSource);
-  assert.match(apiSource, /const files = await finalizeUploadedBatch\(req\);[\s\S]*?createUploadCompletedEvent\(req\)/);
-  assert.match(apiSource, /\.find\(\(file\) => \([\s\S]*?file\.mimetype\.startsWith\('image\/'\)/);
-  assert.match(apiSource, /await onUploadCompleted\(completionEvent\)/);
-  assert.match(serverSource, /targetProcess\?\.connected[\s\S]*?typeof targetProcess\.send !== 'function'/);
-  assert.match(mainSource, /ownedServerProcess !== serverProcess/);
-  assert.match(mainSource, /nativeImage\.createFromPath\(filePath\)/);
-  assert.match(mainSource, /nativeImage\.createFromBuffer\(buffer\)/);
-  assert.match(mainSource, /clipboard\.writeImage\(image\)/);
-  assert.match(mainSource, /clipboard\.readImage\(\)/);
-  assert.match(mainSource, /mainWindow\.webContents\.send\('desktop:auto-copy-result'/);
-  assert.match(mainSource, /snapoverlan:auto-copy-request/);
-  assert.match(mainSource, /await setAutoCopyFirstPhoto\(message\.enabled\)/);
-  assert.match(mainSource, /snapoverlan:auto-copy-response/);
-  assert.match(apiSource, /router\.get\('\/auto-copy'/);
-  assert.match(apiSource, /router\.put\('\/auto-copy'/);
-  assert.match(apiSource, /typeof req\.body\?\.enabled !== 'boolean'/);
+  assert.match(uploadsRouteSource, /const files = await finalizeUploadedBatch\(req\);[\s\S]*?createUploadCompletedEvent\(req\)/);
+  assert.match(uploadsRouteSource, /\.find\(\(file\) => \([\s\S]*?file\.mimetype\.startsWith\('image\/'\)/);
+  assert.match(uploadsRouteSource, /await onUploadCompleted\(completionEvent\)/);
+  assert.match(parentBridgeSource, /processTarget\?\.connected[\s\S]*?typeof processTarget\.send !== 'function'/);
+  assert.match(mainSource, /isOwnedServerProcess: \(serverProcess\) => serverManager\?\.isOwnedProcess\(serverProcess\)/);
+  assert.match(desktopAutoCopyControllerSource, /if \(!isOwnedServerProcess\(serverProcess\)\) return;/);
+  assert.match(desktopAutoCopyControllerSource, /nativeImage\.createFromPath\(filePath\)/);
+  assert.match(desktopAutoCopyControllerSource, /nativeImage\.createFromBuffer\(buffer\)/);
+  assert.match(desktopAutoCopyControllerSource, /clipboard\.writeImage\(image\)/);
+  assert.match(desktopAutoCopyControllerSource, /clipboard\.readImage\(\)/);
+  assert.match(mainSource, /desktopShell\?\.send\('desktop:auto-copy-result'/);
+  assert.match(desktopAutoCopyControllerSource, /snapoverlan:auto-copy-request/);
+  assert.match(desktopAutoCopyControllerSource, /await setEnabled\(message\.enabled\)/);
+  assert.match(desktopAutoCopyControllerSource, /snapoverlan:auto-copy-response/);
+  assert.match(systemRouteSource, /router\.get\('\/auto-copy'/);
+  assert.match(systemRouteSource, /router\.put\('\/auto-copy'/);
+  assert.match(systemRouteSource, /typeof req\.body\?\.enabled !== 'boolean'/);
   assert.match(serverSource, /isLoopbackRequest/);
   assert.match(extensionMarkup, /id="autoCopyToggleBtn"[^>]+aria-pressed="false"[^>]*>Auto-copy: Off<\/button>/);
   assert.match(extensionMarkup, /id="autoCopyToggleBtn"[^>]+disabled/);
@@ -305,20 +345,20 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
 
 test('verified reused servers are replaced by one owned child when auto-copy is enabled', () => {
   assert.match(
-    mainSource,
+    desktopServerManagerSource,
     /identity\?\.kind !== 'current'[\s\S]*?identity\.shutdownToken[\s\S]*?postServerShutdown\(identity\.shutdownToken\)/,
   );
   assert.match(
-    mainSource,
-    /existingIdentity\?\.shutdownToken && autoCopyFirstPhoto[\s\S]*?stopVerifiedReusedServerForAutoCopy\(existingIdentity\)/,
+    desktopServerManagerSource,
+    /existingIdentity\?\.shutdownToken && getAutoCopyEnabled\(\)[\s\S]*?stopVerifiedReusedServerForAutoCopy\(existingIdentity\)/,
   );
   assert.match(
-    mainSource,
-    /serverLaunchMode !== 'reused'[\s\S]*?verifiedShutdownToken[\s\S]*?stopVerifiedReusedServerForAutoCopy[\s\S]*?await startServer\(\)/,
+    desktopServerManagerSource,
+    /serverLaunchMode !== 'reused'[\s\S]*?verifiedShutdownToken[\s\S]*?stopVerifiedReusedServerForAutoCopy[\s\S]*?await start\(\)/,
   );
-  assert.match(mainSource, /Auto-copy: Waiting|AUTO_COPY_UNAVAILABLE_MESSAGE/);
-  assert.match(mainSource, /ownedServerMessageListeners = new WeakMap\(\)/);
-  assert.match(mainSource, /detachOwnedServerMessageListener\(serverProcess\)/);
+  assert.match(desktopServerManagerSource, /Auto-copy: Waiting|AUTO_COPY_UNAVAILABLE_MESSAGE/);
+  assert.match(desktopServerManagerSource, /ownedServerMessageListeners = new WeakMap\(\)/);
+  assert.match(desktopServerManagerSource, /detachOwnedServerMessageListener\(serverProcess\)/);
   assert.ok(packageConfig.dependencies.sharp);
   assert.equal(packageConfig.devDependencies.sharp, undefined);
 });
@@ -359,16 +399,16 @@ test('desktop typography uses the bundled shared UI font and semantic weights', 
 
 test('history uses the full pictures workspace and provides a return control', () => {
   assert.match(rendererMarkup, /id="closeBatchesBtn"[^>]*>Back to Pictures<\/button>/);
-  assert.match(rendererSource, /setBatchHistoryOpen\(true\)/);
-  assert.match(rendererSource, /setBatchHistoryOpen\(false\)/);
+  assert.match(rendererBatchHistorySource, /addEventListener\('click', \(\) => setOpen\(true\)\)/);
+  assert.match(rendererBatchHistorySource, /addEventListener\('click', \(\) => setOpen\(false\)\)/);
   assert.match(rendererStyles, /\.pictures-panel\.history-open #photoGrid[\s\S]*?display:\s*none/);
   assert.match(rendererStyles, /\.pictures-panel\.history-open \.batches-panel[\s\S]*?flex:\s*1 1 auto/);
 });
 
 test('retention Save is disabled only when the selected value is already saved', () => {
-  assert.match(rendererSource, /savedRetentionValue !== null[\s\S]*?retentionSelect\.value === savedRetentionValue/);
-  assert.match(rendererSource, /savedRetentionValue = normalizeRetentionValue\(settings\.retentionDays\)[\s\S]*?updateRetentionSaveButton\(\)/);
-  assert.match(rendererSource, /retentionSelect\?\.addEventListener\('change', updateRetentionSaveButton\)/);
+  assert.match(rendererBatchHistorySource, /savedRetentionValue !== null[\s\S]*?retentionSelect\.value === savedRetentionValue/);
+  assert.match(rendererBatchHistorySource, /savedRetentionValue = normalizeRetentionValue\(settings\.retentionDays\)[\s\S]*?updateSaveButton\(\)/);
+  assert.match(rendererBatchHistorySource, /retentionSelect\?\.addEventListener\('change', updateSaveButton\)/);
 });
 
 test('verified reused server requires authentication and shuts down gracefully', async (t) => {

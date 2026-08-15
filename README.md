@@ -188,9 +188,8 @@ The SVG masters are in `assets/branding`:
 
 Run `npm run generate:icons` to render all PNG sizes, Windows ICO, macOS
 ICNS, Linux icons, tray icons, extension icons, favicons, Apple touch icon,
-and standard/maskable PWA icons. Raster masters and size previews are written
-under `assets/branding/png`; platform files are written to `assets/electron`,
-`extension/icons`, and `pwa/icons`.
+and standard/maskable PWA icons. Generated platform files are written to
+`assets/electron`, `extension/icons`, and `pwa/icons`.
 
 Extension toolbar icons use the rounded dark app tile. Regular PWA icons retain
 transparent rounded-square corners, while Apple touch and maskable icons use an

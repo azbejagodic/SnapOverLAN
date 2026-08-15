@@ -5,7 +5,6 @@ import sharp from 'sharp';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const brandingDir = path.join(root, 'assets', 'branding');
-const rasterDir = path.join(brandingDir, 'png');
 const electronDir = path.join(root, 'assets', 'electron');
 const extensionDir = path.join(root, 'extension', 'icons');
 const pwaDir = path.join(root, 'pwa', 'icons');
@@ -14,7 +13,7 @@ const appIconSvg = await readFile(path.join(brandingDir, 'snapoverlan-app-icon.s
 const sizes = [16, 19, 20, 24, 32, 38, 48, 64, 128, 180, 192, 256, 512, 1024];
 const visibleMarkWidth = 0.62;
 
-await Promise.all([rasterDir, electronDir, extensionDir, pwaDir].map((dir) => mkdir(dir, { recursive: true })));
+await Promise.all([electronDir, extensionDir, pwaDir].map((dir) => mkdir(dir, { recursive: true })));
 
 async function render(svg, size) {
   return sharp(svg, { density: 384 })
@@ -95,16 +94,7 @@ for (const size of sizes) {
   const mark = await centeredMark(size);
   const appIcon = await render(appIconSvg, size);
   rendered.set(size, { mark, appIcon });
-  await Promise.all([
-    writeFile(path.join(rasterDir, `snapoverlan-mark-${size}.png`), mark),
-    writeFile(path.join(rasterDir, `snapoverlan-app-icon-${size}.png`), appIcon),
-  ]);
 }
-
-await Promise.all([
-  writeFile(path.join(brandingDir, 'snapoverlan-mark.png'), rendered.get(1024).mark),
-  writeFile(path.join(brandingDir, 'snapoverlan-app-icon.png'), rendered.get(1024).appIcon),
-]);
 
 const desktopSizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
 await Promise.all(desktopSizes.map((size) => writeFile(path.join(electronDir, `app-${size}.png`), rendered.get(size).appIcon)));
@@ -133,4 +123,4 @@ await Promise.all([
 const faviconImages = [16, 24, 32, 48].map((size) => ({ size, data: rendered.get(size).mark }));
 await writeFile(path.join(pwaDir, 'favicon.ico'), iconContainer('ico', faviconImages));
 
-console.log(`Generated SnapOverLAN marks and app icons at ${sizes.join(', ')} px.`);
+console.log('Generated SnapOverLAN Electron, extension, and PWA icons.');

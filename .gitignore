@@ -144,3 +144,11 @@ data/latest/*
 data/upload-tmp/*
 
 data/
+
+# Generated branding previews (SVG files in assets/branding are the masters)
+/assets/branding/png/
+/assets/branding/snapoverlan-mark.png
+/assets/branding/snapoverlan-app-icon.png
+
+# Local acceptance screenshot
+/paint-auto-copy-acceptance.png

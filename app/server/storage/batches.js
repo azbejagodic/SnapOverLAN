@@ -93,16 +93,23 @@ const listBatchFiles = async (id) => {
 };
 
 const getBatchFilePath = async (name) => {
+  const currentBatchDir = await getCurrentBatchDir();
+  if (!currentBatchDir) throw new Error('No current batch.');
+  return resolveFileWithinBatch(currentBatchDir, name);
+};
+
+const resolveFileWithinBatch = (batchDir, name) => {
   if (!name || name !== path.basename(name) || name.includes('/') || name.includes('\\')) {
     throw new Error('Invalid filename.');
   }
-  const currentBatchDir = await getCurrentBatchDir();
-  if (!currentBatchDir) throw new Error('No current batch.');
-  const resolved = path.resolve(currentBatchDir, name);
-  if (!resolved.startsWith(`${path.resolve(currentBatchDir)}${path.sep}`)) {
-    throw new Error('Invalid filename.');
-  }
+  const resolved = path.resolve(batchDir, name);
+  if (!resolved.startsWith(`${path.resolve(batchDir)}${path.sep}`)) throw new Error('Invalid filename.');
   return resolved;
+};
+
+const getBatchFilePathById = async (id, name) => {
+  if (!(await batchExists(id))) throw new Error('Batch not found.');
+  return resolveFileWithinBatch(resolveBatchDir(id), name);
 };
 
 const padDatePart = (value) => String(value).padStart(2, '0');
@@ -204,6 +211,7 @@ export {
   deleteBatch,
   formatUploadTimestamp,
   getBatchFilePath,
+  getBatchFilePathById,
   getCurrentBatchId,
   listBatches,
   listBatchFiles,

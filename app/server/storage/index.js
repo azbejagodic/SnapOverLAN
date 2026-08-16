@@ -15,6 +15,7 @@ export {
   clearAllBatches,
   deleteBatch,
   getBatchFilePath,
+  getBatchFilePathById,
   listBatches,
   listBatchFiles,
   listLatestFiles,

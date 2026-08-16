@@ -390,7 +390,6 @@ batchHistory = createBatchHistory({
   downloadButton: downloadCurrentBatchBtn,
   fetchJson,
   formatBytes,
-  serverUrl,
   setMessage: setBatchMessage,
 });
 batchHistory.bind();

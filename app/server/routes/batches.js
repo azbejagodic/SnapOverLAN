@@ -3,6 +3,7 @@ import { createZipBuffer, formatBatchZipName } from '../archive.js';
 import {
   clearAllBatches,
   deleteBatch,
+  getBatchFilePathById,
   getStorageSettings,
   listBatches,
   listBatchFiles,
@@ -42,6 +43,12 @@ const createBatchesRouter = () => {
   });
   router.get('/batches/:id', async (req, res) => {
     try { res.json({ id: req.params.id, files: await listBatchFiles(req.params.id) }); } catch (err) { sendStorageError(res, err); }
+  });
+  router.get('/batches/:id/files/:name', async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      res.sendFile(await getBatchFilePathById(req.params.id, req.params.name));
+    } catch (err) { sendStorageError(res, err); }
   });
   router.post('/batches/:id/select', async (req, res) => {
     try { res.json({ id: req.params.id, files: await selectBatch(req.params.id) }); } catch (err) { sendStorageError(res, err); }

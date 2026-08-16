@@ -20,6 +20,7 @@ import { copyImageBytesToClipboard } from './manual-copy.js';
 import { createServerManager } from './desktop/server-manager.js';
 import { createSettingsStore } from './desktop/settings-store.js';
 import { createAutoCopyController } from './desktop/auto-copy-controller.js';
+import { downloadBatchToFolder } from './desktop/batch-download.js';
 import { createDesktopShell } from './desktop/shell.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -262,6 +263,27 @@ ipcMain.handle('server:get-state', () => getServerStatePayload());
 ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
+ipcMain.handle('batch:download', async (event, batchId) => {
+  if (!desktopShell.isMainWindowSender(event.sender)) {
+    throw new Error('Batch download request was rejected.');
+  }
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const dialogOptions = {
+    title: 'Choose where to save the batch',
+    buttonLabel: 'Choose folder',
+    defaultPath: electronApp.getPath('downloads'),
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  const selection = parentWindow
+    ? await dialog.showOpenDialog(parentWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+  const destinationDir = selection.filePaths?.[0];
+  if (selection.canceled || !destinationDir) return { canceled: true, savedCount: 0 };
+  return {
+    canceled: false,
+    ...await downloadBatchToFolder({ batchId, destinationDir, serverOrigin: SERVER_ORIGIN }),
+  };
+});
 ipcMain.handle('image:copy', (event, imageBytes) => {
   if (!desktopShell.isMainWindowSender(event.sender)) {
     throw new Error('Image copy request was rejected.');

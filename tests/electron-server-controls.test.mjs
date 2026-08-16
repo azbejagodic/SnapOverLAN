@@ -27,6 +27,10 @@ const desktopAutoCopyControllerSource = await readFile(
   path.join(projectRoot, 'app', 'desktop', 'auto-copy-controller.js'),
   'utf8',
 );
+const desktopBatchDownloadSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'batch-download.js'),
+  'utf8',
+);
 const desktopShellSource = await readFile(
   path.join(projectRoot, 'app', 'desktop', 'shell.js'),
   'utf8',
@@ -44,6 +48,11 @@ const systemRouteSource = await readFile(
   path.join(projectRoot, 'app', 'server', 'routes', 'system.js'),
   'utf8',
 );
+const batchesRouteSource = await readFile(
+  path.join(projectRoot, 'app', 'server', 'routes', 'batches.js'),
+  'utf8',
+);
+const archiveSource = await readFile(path.join(projectRoot, 'app', 'server', 'archive.js'), 'utf8');
 const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'), 'utf8');
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
@@ -125,6 +134,8 @@ test('preload exposes only narrow server, background, and auto-copy result metho
   assert.doesNotMatch(preloadSource, /startServer|stopServer|server:start|server:stop/);
   assert.match(preloadSource, /getBackgroundMode/);
   assert.match(preloadSource, /setBackgroundMode/);
+  assert.match(preloadSource, /downloadBatch[\s\S]*?ipcRenderer\.invoke\('batch:download', batchId\)/);
+  assert.match(preloadSource, /BATCH_ID_PATTERN\.test\(batchId\)/);
   assert.match(preloadSource, /copyImageBytes[\s\S]*?ipcRenderer\.invoke\('image:copy', imageBytes\)/);
   assert.match(preloadSource, /imageBytes\.byteLength > MAX_IMAGE_COPY_BYTES/);
   assert.match(preloadSource, /onAutoCopyResult/);
@@ -382,10 +393,33 @@ test('recent batches are the primary workspace with selection, download, and del
   assert.doesNotMatch(rendererMarkup, /Back to Pictures|id="batchesBtn"|id="closeBatchesBtn"/);
   assert.match(rendererBatchHistorySource, /textContent = batch\.current \? 'Selected' : 'Select'/);
   assert.match(rendererBatchHistorySource, /deleteButton\.textContent = 'Delete'/);
-  assert.match(rendererBatchHistorySource, /serverUrl\('\/api\/latest\/download'\)/);
+  assert.match(rendererBatchHistorySource, /window\.snapOverLAN\.downloadBatch\(currentBatch\.id\)/);
   assert.match(rendererBatchHistorySource, /downloadButton\?\.addEventListener\('click', downloadCurrentBatch\)/);
+  assert.doesNotMatch(rendererBatchHistorySource, /latest\/download|createObjectURL|\.zip/);
   assert.match(rendererStyles, /\.batches-header[\s\S]*?justify-content:\s*space-between/);
   assert.match(rendererStyles, /\.batch-toolbar-actions[\s\S]*?margin-left:\s*auto/);
+});
+
+test('Electron downloads batch files directly through a guarded folder picker', () => {
+  assert.match(
+    mainSource,
+    /ipcMain\.handle\('batch:download'[\s\S]*?desktopShell\.isMainWindowSender\(event\.sender\)/,
+  );
+  assert.match(mainSource, /properties:\s*\['openDirectory', 'createDirectory'\]/);
+  assert.match(mainSource, /dialog\.showOpenDialog\((?:parentWindow, )?dialogOptions\)/);
+  assert.match(mainSource, /downloadBatchToFolder\(\{ batchId, destinationDir, serverOrigin: SERVER_ORIGIN \}\)/);
+  assert.match(desktopBatchDownloadSource, /Buffer\.from\(await fileResponse\.arrayBuffer\(\)\)/);
+  assert.match(desktopBatchDownloadSource, /writeFile[\s\S]*?flag:\s*'wx'/);
+  assert.match(desktopBatchDownloadSource, /`\$\{stem\} \(\$\{suffix\}\)\$\{extension\}`/);
+  assert.match(batchesRouteSource, /router\.get\('\/batches\/:id\/files\/:name'/);
+});
+
+test('server ZIP archive API remains available outside the Electron download flow', () => {
+  assert.match(batchesRouteSource, /router\.get\('\/latest\/download'/);
+  assert.match(batchesRouteSource, /createZipBuffer\(files\)/);
+  assert.match(batchesRouteSource, /'Content-Type', 'application\/zip'/);
+  assert.match(archiveSource, /const createZipBuffer = async/);
+  assert.match(archiveSource, /batch\.zip|formatBatchZipName/);
 });
 
 test('desktop content header omits duplicate SnapOverLAN branding', () => {

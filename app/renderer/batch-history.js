@@ -9,20 +9,6 @@ const formatBatchDate = (value) => {
   });
 };
 
-const formatBatchZipName = (batchTimestamp) => {
-  const date = batchTimestamp ? new Date(batchTimestamp) : new Date();
-  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
-  const parts = [
-    safeDate.getFullYear(),
-    String(safeDate.getMonth() + 1).padStart(2, '0'),
-    String(safeDate.getDate()).padStart(2, '0'),
-    String(safeDate.getHours()).padStart(2, '0'),
-    String(safeDate.getMinutes()).padStart(2, '0'),
-    String(safeDate.getSeconds()).padStart(2, '0'),
-  ];
-  return `snapoverlan_${parts[0]}-${parts[1]}-${parts[2]}_${parts[3]}-${parts[4]}-${parts[5]}_batch.zip`;
-};
-
 const createBatchHistory = ({
   batchesList,
   clearButton,
@@ -30,7 +16,6 @@ const createBatchHistory = ({
   downloadButton,
   fetchJson,
   formatBytes,
-  serverUrl,
   setMessage,
 }) => {
   let batches = [];
@@ -147,19 +132,13 @@ const createBatchHistory = ({
     downloadButton.disabled = true;
     downloadButton.textContent = 'Downloading...';
     try {
-      const response = await fetch(serverUrl('/api/latest/download'));
-      if (!response.ok) throw new Error(`Download failed (${response.status})`);
-      const objectUrl = URL.createObjectURL(await response.blob());
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = formatBatchZipName(currentBatch.createdAt);
-      link.click();
-      URL.revokeObjectURL(objectUrl);
-      clearMessage();
+      if (!window.snapOverLAN?.downloadBatch) throw new Error('Desktop download is unavailable.');
+      const result = await window.snapOverLAN.downloadBatch(currentBatch.id);
+      if (!result?.canceled) clearMessage();
     } catch (error) {
       setMessage(error.message || 'Could not download the current batch.');
     } finally {
-      downloadButton.textContent = 'Download current batch';
+      downloadButton.textContent = 'Download';
       updateDownloadButton();
     }
   };

@@ -396,9 +396,9 @@ test('desktop content header omits duplicate SnapOverLAN branding', () => {
 });
 
 test('Electron companion window uses compact resizable bounds', () => {
-  assert.match(desktopShellSource, /width:\s*540/);
+  assert.match(desktopShellSource, /width:\s*500/);
   assert.match(desktopShellSource, /height:\s*580/);
-  assert.match(desktopShellSource, /minWidth:\s*480/);
+  assert.match(desktopShellSource, /minWidth:\s*460/);
   assert.match(desktopShellSource, /resizable:\s*true/);
 });
 

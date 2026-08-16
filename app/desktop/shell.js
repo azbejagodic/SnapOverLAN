@@ -65,9 +65,9 @@ const createDesktopShell = ({
   const createWindow = async () => {
     mainWindow = new BrowserWindow({
       show: false,
-      width: 540,
+      width: 500,
       height: 580,
-      minWidth: 480,
+      minWidth: 460,
       minHeight: 540,
       resizable: true,
       title: 'SnapOverLAN',

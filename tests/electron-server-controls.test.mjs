@@ -400,13 +400,13 @@ test('recent batches are the primary workspace with selection, download, and del
   assert.match(rendererStyles, /\.batch-toolbar-actions[\s\S]*?margin-left:\s*auto/);
 });
 
-test('Electron downloads batch files directly through a guarded folder picker', () => {
+test('Electron downloads batch files directly to the standard Downloads directory', () => {
   assert.match(
     mainSource,
     /ipcMain\.handle\('batch:download'[\s\S]*?desktopShell\.isMainWindowSender\(event\.sender\)/,
   );
-  assert.match(mainSource, /properties:\s*\['openDirectory', 'createDirectory'\]/);
-  assert.match(mainSource, /dialog\.showOpenDialog\((?:parentWindow, )?dialogOptions\)/);
+  assert.match(mainSource, /const destinationDir = electronApp\.getPath\('downloads'\)/);
+  assert.doesNotMatch(mainSource, /showOpenDialog|openDirectory|createDirectory|Choose folder/);
   assert.match(mainSource, /downloadBatchToFolder\(\{ batchId, destinationDir, serverOrigin: SERVER_ORIGIN \}\)/);
   assert.match(desktopBatchDownloadSource, /Buffer\.from\(await fileResponse\.arrayBuffer\(\)\)/);
   assert.match(desktopBatchDownloadSource, /writeFile[\s\S]*?flag:\s*'wx'/);

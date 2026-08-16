@@ -267,22 +267,8 @@ ipcMain.handle('batch:download', async (event, batchId) => {
   if (!desktopShell.isMainWindowSender(event.sender)) {
     throw new Error('Batch download request was rejected.');
   }
-  const parentWindow = BrowserWindow.fromWebContents(event.sender);
-  const dialogOptions = {
-    title: 'Choose where to save the batch',
-    buttonLabel: 'Choose folder',
-    defaultPath: electronApp.getPath('downloads'),
-    properties: ['openDirectory', 'createDirectory'],
-  };
-  const selection = parentWindow
-    ? await dialog.showOpenDialog(parentWindow, dialogOptions)
-    : await dialog.showOpenDialog(dialogOptions);
-  const destinationDir = selection.filePaths?.[0];
-  if (selection.canceled || !destinationDir) return { canceled: true, savedCount: 0 };
-  return {
-    canceled: false,
-    ...await downloadBatchToFolder({ batchId, destinationDir, serverOrigin: SERVER_ORIGIN }),
-  };
+  const destinationDir = electronApp.getPath('downloads');
+  return downloadBatchToFolder({ batchId, destinationDir, serverOrigin: SERVER_ORIGIN });
 });
 ipcMain.handle('image:copy', (event, imageBytes) => {
   if (!desktopShell.isMainWindowSender(event.sender)) {

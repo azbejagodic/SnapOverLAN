@@ -133,8 +133,8 @@ const createBatchHistory = ({
     downloadButton.textContent = 'Downloading...';
     try {
       if (!window.snapOverLAN?.downloadBatch) throw new Error('Desktop download is unavailable.');
-      const result = await window.snapOverLAN.downloadBatch(currentBatch.id);
-      if (!result?.canceled) clearMessage();
+      await window.snapOverLAN.downloadBatch(currentBatch.id);
+      clearMessage();
     } catch (error) {
       setMessage(error.message || 'Could not download the current batch.');
     } finally {

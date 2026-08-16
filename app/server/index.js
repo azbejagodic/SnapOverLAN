@@ -11,7 +11,9 @@ import {
   STARTUP_LOG_PATH,
   UPLOAD_TEMP_DIR,
 } from './config.js';
+import { formatDeviceHostname, getOrCreateDeviceId } from './device-identity.js';
 import { getPhoneUrlRecords } from './lan.js';
+import { createMdnsAdvertiser } from './mdns.js';
 import { ensureStorageDirectories } from './storage.js';
 import { createServerApp } from './app.js';
 import { createParentBridge } from './parent-bridge.js';
@@ -22,22 +24,30 @@ import {
 
 const activeSockets = new Set();
 let serverInstance = null;
+let serverReady = false;
 let shutdownPromise = null;
 let parentWatchTimer = null;
+let deviceId = '';
+let hostname = '';
+let mdnsAdvertiser = null;
+let mdnsStatus = null;
 
 const getServerStatus = () => {
   const address = serverInstance?.address?.();
   const boundAddress = address && typeof address === 'object' ? address.address : HOST;
   const boundPort = address && typeof address === 'object' ? address.port : PORT;
-  const lanUrls = getPhoneUrlRecords();
+  const lanUrls = getPhoneUrlRecords({ port: boundPort || PORT });
 
   return {
-    status: serverInstance?.listening ? 'listening' : 'starting',
+    status: serverInstance?.listening && serverReady ? 'listening' : 'starting',
     application: SERVER_APPLICATION,
     protocolVersion: SERVER_PROTOCOL_VERSION,
     configuredHost: HOST,
     bindHost: boundAddress || HOST,
     port: boundPort || PORT,
+    deviceId,
+    hostname,
+    stableUrl: mdnsStatus?.started ? mdnsStatus.stableUrl : '',
     lanUrls,
     primaryLanUrl: lanUrls[0]?.url || '',
     launchSource: LAUNCH_SOURCE,
@@ -47,6 +57,39 @@ const getServerStatus = () => {
     uploadTempDir: UPLOAD_TEMP_DIR,
     pid: process.pid,
   };
+};
+
+const stopMdnsAdvertisement = async () => {
+  const activeAdvertiser = mdnsAdvertiser;
+  mdnsAdvertiser = null;
+  mdnsStatus = null;
+  if (!activeAdvertiser) return;
+  try { await activeAdvertiser.stop(); }
+  catch (error) { console.warn('Could not stop SnapOverLAN mDNS advertisement:', error); }
+};
+
+const startMdnsAdvertisement = async ({ mdnsFactory, port }) => {
+  await stopMdnsAdvertisement();
+  if (!deviceId) return;
+  try {
+    mdnsAdvertiser = mdnsFactory({ deviceId, port });
+    mdnsStatus = await mdnsAdvertiser.start();
+  } catch (error) {
+    console.warn('Could not start SnapOverLAN mDNS advertisement; using IP fallback:', error);
+    await stopMdnsAdvertisement();
+  }
+};
+
+const loadPersistentIdentity = async () => {
+  if (deviceId) return;
+  try {
+    deviceId = await getOrCreateDeviceId();
+    hostname = formatDeviceHostname(deviceId);
+  } catch (error) {
+    deviceId = '';
+    hostname = '';
+    console.warn('Could not load SnapOverLAN device identity; using IP fallback:', error);
+  }
 };
 
 const appendStartupLog = async (event, details = {}) => {
@@ -81,19 +124,32 @@ const app = createServerApp({
   setAutoCopySetting: (enabled) => requestAutoCopySettingFromParent('set', enabled),
 });
 
-const startServer = async ({ host = HOST, port = PORT, log = true } = {}) => {
+const startServer = async ({
+  host = HOST,
+  log = true,
+  mdnsFactory = createMdnsAdvertiser,
+  port = PORT,
+} = {}) => {
   if (serverInstance?.listening) {
     return serverInstance;
   }
 
-  await ensureStorageDirectories();
+  await Promise.all([ensureStorageDirectories(), loadPersistentIdentity()]);
 
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, host, () => {
+    const server = app.listen(port, host, async () => {
       serverInstance = server;
+      serverReady = false;
+      const listeningAddress = server.address();
+      const listeningPort = listeningAddress && typeof listeningAddress === 'object'
+        ? listeningAddress.port
+        : port;
+      await startMdnsAdvertisement({ mdnsFactory, port: listeningPort });
+      serverReady = true;
       const status = getServerStatus();
       if (log) {
-        console.log(`SnapOverLAN listening on http://${host}:${port}`);
+        console.log(`SnapOverLAN listening on http://${host}:${listeningPort}`);
+        if (status.stableUrl) console.log(`SnapOverLAN stable URL: ${status.stableUrl}`);
         console.log(`SnapOverLAN runtime data: ${DATA_ROOT}`);
         console.log(`SnapOverLAN LAN URLs: ${status.lanUrls.map((item) => item.url).join(', ') || 'none detected'}`);
       }
@@ -112,12 +168,11 @@ const startServer = async ({ host = HOST, port = PORT, log = true } = {}) => {
 };
 
 const stopServer = async () => {
-  if (!serverInstance) {
-    return;
-  }
-
   const server = serverInstance;
   serverInstance = null;
+  serverReady = false;
+  await stopMdnsAdvertisement();
+  if (!server) return;
   await new Promise((resolve, reject) => {
     const socketCleanupTimer = setTimeout(() => {
       for (const socket of activeSockets) {

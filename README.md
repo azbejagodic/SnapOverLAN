@@ -68,8 +68,10 @@ In development, uploads use `data/latest/`, `data/batches/`, and temporary stagi
 Connect the phone and PC to the same Wi-Fi network. In the App, scan the QR code or open the displayed LAN URL, for example:
 
 ```text
-http://192.168.1.16:8787
+http://snap-a1b2c3d4.local:8787
 ```
+
+SnapOverLAN creates a persistent eight-character device ID in its runtime data directory and advertises `snap-<deviceId>.local` over mDNS. The QR code prefers this stable address, so DHCP address changes do not require rescanning. Direct LAN IP URLs such as `http://192.168.1.16:8787` remain visible in diagnostics and are used automatically when mDNS is unavailable.
 
 The PWA lets the user:
 
@@ -108,12 +110,10 @@ When opened, it fetches the latest uploaded images and the desktop app's Auto-co
 
 ## Windows firewall
 
-The Setup installer creates this inbound firewall rule:
+The Setup installer creates these inbound firewall rules:
 
-- Rule name: `SnapOverLAN LAN Upload`
-- Protocol: TCP
-- Local port: 8787
-- Profile: Private only
+- `SnapOverLAN LAN Upload`: TCP port 8787, Private profile
+- `SnapOverLAN mDNS`: UDP port 5353 from the local subnet, Private profile
 
 The rule is removed during uninstall. The portable build does not run installer-time firewall configuration.
 
@@ -121,8 +121,8 @@ If the phone cannot connect:
 
 1. Set the Windows network profile to Private.
 2. Confirm the phone and PC are on the same Wi-Fi.
-3. Use the LAN URL shown in the App, not `localhost`.
-4. Check for guest Wi-Fi, VPN routing, access-point isolation, or third-party firewall rules.
+3. Use the `.local` or LAN URL shown in the App, not `localhost`.
+4. Check for guest Wi-Fi, VPN routing, multicast filtering, access-point isolation, or third-party firewall rules.
 5. Prefer the Setup installer for normal use.
 
 ## API

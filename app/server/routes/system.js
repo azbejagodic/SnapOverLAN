@@ -2,7 +2,6 @@ import crypto from 'crypto';
 import { Router } from 'express';
 import { PORT } from '../config.js';
 import { SERVER_APPLICATION, SERVER_CONTROL_ID, SERVER_PROTOCOL_VERSION } from '../identity.js';
-import { getPhoneUrlRecords } from '../lan.js';
 
 const createSystemRouter = ({
   getAutoCopySetting = null,
@@ -56,13 +55,20 @@ const createSystemRouter = ({
     catch (err) { res.status(503).json({ error: err.message || 'Auto-copy control is unavailable.' }); }
   });
   router.get('/phone-url', (req, res) => {
-    const lanUrls = getPhoneUrlRecords();
-    const requestHost = req.get('host') || `localhost:${PORT}`;
+    const serverStatus = getServerStatus();
+    const serverPort = serverStatus?.port || PORT;
+    const lanUrls = Array.isArray(serverStatus?.lanUrls) ? serverStatus.lanUrls : [];
+    const requestHost = req.get('host') || `localhost:${serverPort}`;
     const fallbackUrl = `http://${requestHost}`;
     const urls = lanUrls.length > 0
       ? lanUrls
       : [{ address: requestHost.split(':')[0], private: false, url: fallbackUrl }];
-    res.json({ port: PORT, primaryUrl: urls[0].url, urls });
+    res.json({
+      port: serverPort,
+      stableUrl: serverStatus?.stableUrl || '',
+      primaryUrl: urls[0].url,
+      urls,
+    });
   });
   router.get('/server-status', (_req, res) => res.json(getServerStatus()));
   return router;

@@ -217,6 +217,9 @@ function renderDiagnostics(data) {
   addDiagnosticRow('Server source', data.launchSource || 'unknown');
   addDiagnosticRow('Bind host', data.bindHost || data.configuredHost || 'unknown');
   addDiagnosticRow('Port', String(data.port || 'unknown'));
+  addDiagnosticRow('Device ID', data.deviceId || 'Not available');
+  addDiagnosticRow('.local hostname', data.hostname || 'Not available');
+  addDiagnosticRow('Stable phone URL', data.stableUrl || 'mDNS unavailable');
   addDiagnosticRow('Primary phone URL', currentPhoneUrl || data.primaryLanUrl || 'No LAN URL detected');
   addDiagnosticRow('Runtime data', data.runtimeDataDir || 'unknown');
   addDiagnosticRow('Upload staging', data.uploadTempDir || 'unknown');
@@ -270,7 +273,8 @@ function renderQrCode(phoneUrl) {
 }
 
 function renderPhoneSetup(data) {
-  currentPhoneUrl = choosePhoneUrl(data)?.url || '';
+  const stableUrl = isUsablePhoneUrl(data?.stableUrl) ? data.stableUrl : '';
+  currentPhoneUrl = stableUrl || choosePhoneUrl(data)?.url || '';
   phoneUrlInput.textContent = currentPhoneUrl;
   phoneUrlInput.title = currentPhoneUrl;
   renderQrCode(currentPhoneUrl);

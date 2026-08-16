@@ -39,10 +39,20 @@ const getLanIpv4Addresses = () => {
   ));
 };
 
-const getPhoneUrlRecords = () => getLanIpv4Addresses().map(({ address, private: isPrivate }) => ({
+const getPreferredLanIpv4Address = (addresses = getLanIpv4Addresses()) => {
+  const usableAddresses = addresses.filter(({ address }) => !address.startsWith('169.254.'));
+  return usableAddresses.find(({ private: isPrivate }) => isPrivate)?.address
+    || usableAddresses[0]?.address
+    || '';
+};
+
+const getPhoneUrlRecords = ({
+  addresses = getLanIpv4Addresses(),
+  port = PORT,
+} = {}) => addresses.map(({ address, private: isPrivate }) => ({
   address,
   private: isPrivate,
-  url: `http://${address}:${PORT}`,
+  url: `http://${address}:${port}`,
 }));
 
-export { getLanIpv4Addresses, getPhoneUrlRecords };
+export { getLanIpv4Addresses, getPhoneUrlRecords, getPreferredLanIpv4Address };

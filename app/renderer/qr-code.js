@@ -2,6 +2,7 @@ const QR_VERSION = 2;
 const QR_SIZE = 17 + QR_VERSION * 4;
 const QR_DATA_CODEWORDS = 34;
 const QR_ECC_CODEWORDS = 10;
+const QR_MAX_UTF8_BYTES = 32;
 const GF_EXP = [];
 const GF_LOG = [];
 
@@ -44,7 +45,7 @@ function appendBits(target, value, length) {
 
 function createDataCodewords(text) {
   const bytes = getUtf8Bytes(text);
-  if (bytes.length > 32) {
+  if (bytes.length > QR_MAX_UTF8_BYTES) {
     throw new Error('Phone URL is too long for the built-in QR code.');
   }
 
@@ -339,4 +340,4 @@ function drawQrCode(canvas, text) {
 
 initGaloisTables();
 
-export { drawQrCode };
+export { drawQrCode, QR_MAX_UTF8_BYTES };

@@ -377,7 +377,7 @@ test('desktop typography uses the bundled shared UI font and semantic weights', 
 
 test('recent batches are the primary workspace with selection, download, and deletion', () => {
   assert.match(rendererMarkup, /aria-label="Recent batches"/);
-  assert.match(rendererMarkup, /id="downloadCurrentBatchBtn"[^>]*>Download current batch<\/button>/);
+  assert.match(rendererMarkup, /id="downloadCurrentBatchBtn"[^>]*>Download<\/button>/);
   assert.match(rendererMarkup, /id="clearBatchesBtn"[^>]*>Clear all<\/button>/);
   assert.doesNotMatch(rendererMarkup, /Back to Pictures|id="batchesBtn"|id="closeBatchesBtn"/);
   assert.match(rendererBatchHistorySource, /textContent = batch\.current \? 'Selected' : 'Select'/);

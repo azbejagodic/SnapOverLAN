@@ -65,13 +65,20 @@ const createDesktopShell = ({
   const createWindow = async () => {
     mainWindow = new BrowserWindow({
       show: false,
-      width: 960,
-      height: 600,
-      minWidth: 860,
+      width: 540,
+      height: 580,
+      minWidth: 480,
       minHeight: 540,
+      resizable: true,
       title: 'SnapOverLAN',
       icon: appIconPath,
       backgroundColor: '#343940',
+      titleBarStyle: 'hidden',
+      titleBarOverlay: {
+        color: '#343940',
+        symbolColor: '#f5fdff',
+        height: 32,
+      },
       autoHideMenuBar: true,
       webPreferences: {
         preload: preloadPath,

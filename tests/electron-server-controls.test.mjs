@@ -134,28 +134,10 @@ test('preload exposes only narrow server, background, and auto-copy result metho
   assert.doesNotMatch(preloadSource, /clipboard|nativeImage|node:fs|['"]fs['"]/);
 });
 
-test('picture Copy sends image bytes to main and never falls back to URL text', () => {
-  const copyImageSource = rendererSource.match(
-    /async function copyImage\(imageUrl\)[\s\S]*?\n\}/,
-  )?.[0];
-  assert.ok(copyImageSource);
-  assert.match(copyImageSource, /await fetch\(imageUrl\)/);
-  assert.match(copyImageSource, /response\.arrayBuffer\(\)/);
-  assert.match(copyImageSource, /window\.snapOverLAN\.copyImageBytes/);
-  assert.doesNotMatch(
-    copyImageSource,
-    /copyText|writeText|navigator\.clipboard|ClipboardItem/,
-  );
-  assert.match(
-    rendererSource,
-    /await copyImage\(mediaUrl\);[\s\S]*?setPicturesMessage\(error\.message \|\| 'Could not copy image\.'\)/,
-  );
-  assert.match(mainSource, /ipcMain\.handle\('image:copy'/);
-  assert.match(mainSource, /desktopShell\.isMainWindowSender\(event\.sender\)/);
-  assert.match(desktopShellSource, /sender === mainWindow\.webContents/);
-  assert.match(mainSource, /copyImageBytesToClipboard\(\{/);
-  assert.match(mainSource, /nativeImage\.createFromBuffer\(buffer\)/);
-  assert.match(mainSource, /clipboard\.writeImage\(image\)/);
+test('desktop companion exposes no manual photo copy or viewer actions', () => {
+  assert.doesNotMatch(rendererMarkup, /photoGrid|gridViewBtn|listViewBtn|gridCountSelect|picturePagination/);
+  assert.doesNotMatch(rendererSource, /copyImage|copyImageBytes|downloadImage|renderPictures|loadLatestPictures/);
+  assert.doesNotMatch(rendererStyles, /\.photo-(?:grid|list|card|row|action)|\.view-toggle|\.grid-count-control|\.picture-pagination/);
 });
 
 test('background mode is limited to an online server', () => {
@@ -305,11 +287,7 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
   const selectBatchSource = rendererBatchHistorySource.match(
     /async function selectBatch[\s\S]*?\n\}/,
   )?.[0];
-  const loadLatestPicturesSource = rendererSource.match(
-    /async function loadLatestPictures[\s\S]*?\n\}/,
-  )?.[0];
   assert.ok(selectBatchSource);
-  assert.ok(loadLatestPicturesSource);
   assert.match(uploadsRouteSource, /const files = await finalizeUploadedBatch\(req\);[\s\S]*?createUploadCompletedEvent\(req\)/);
   assert.match(uploadsRouteSource, /\.find\(\(file\) => \([\s\S]*?file\.mimetype\.startsWith\('image\/'\)/);
   assert.match(uploadsRouteSource, /await onUploadCompleted\(completionEvent\)/);
@@ -340,7 +318,7 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
   assert.match(rendererSource, /Copied \$\{filename\} to clipboard/);
   assert.doesNotMatch(rendererSource, /copyFirstUploadedImage|nativeImage|clipboard\.writeImage/);
   assert.doesNotMatch(selectBatchSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);
-  assert.doesNotMatch(loadLatestPicturesSource, /autoCopy|desktop:auto-copy|setAutoCopyFirstPhoto/);
+  assert.doesNotMatch(rendererSource, /loadLatestPictures|renderPictures|photoGrid/);
 });
 
 test('verified reused servers are replaced by one owned child when auto-copy is enabled', () => {
@@ -397,18 +375,50 @@ test('desktop typography uses the bundled shared UI font and semantic weights', 
   assert.ok(packageConfig.build.files.includes('app/**/*'));
 });
 
-test('history uses the full pictures workspace and provides a return control', () => {
-  assert.match(rendererMarkup, /id="closeBatchesBtn"[^>]*>Back to Pictures<\/button>/);
-  assert.match(rendererBatchHistorySource, /addEventListener\('click', \(\) => setOpen\(true\)\)/);
-  assert.match(rendererBatchHistorySource, /addEventListener\('click', \(\) => setOpen\(false\)\)/);
-  assert.match(rendererStyles, /\.pictures-panel\.history-open #photoGrid[\s\S]*?display:\s*none/);
-  assert.match(rendererStyles, /\.pictures-panel\.history-open \.batches-panel[\s\S]*?flex:\s*1 1 auto/);
+test('recent batches are the primary workspace with selection, download, and deletion', () => {
+  assert.match(rendererMarkup, /aria-label="Recent batches"/);
+  assert.match(rendererMarkup, /id="downloadCurrentBatchBtn"[^>]*>Download current batch<\/button>/);
+  assert.match(rendererMarkup, /id="clearBatchesBtn"[^>]*>Clear all<\/button>/);
+  assert.doesNotMatch(rendererMarkup, /Back to Pictures|id="batchesBtn"|id="closeBatchesBtn"/);
+  assert.match(rendererBatchHistorySource, /textContent = batch\.current \? 'Selected' : 'Select'/);
+  assert.match(rendererBatchHistorySource, /deleteButton\.textContent = 'Delete'/);
+  assert.match(rendererBatchHistorySource, /serverUrl\('\/api\/latest\/download'\)/);
+  assert.match(rendererBatchHistorySource, /downloadButton\?\.addEventListener\('click', downloadCurrentBatch\)/);
+  assert.match(rendererStyles, /\.batches-header[\s\S]*?justify-content:\s*space-between/);
+  assert.match(rendererStyles, /\.batch-toolbar-actions[\s\S]*?margin-left:\s*auto/);
 });
 
-test('retention Save is disabled only when the selected value is already saved', () => {
-  assert.match(rendererBatchHistorySource, /savedRetentionValue !== null[\s\S]*?retentionSelect\.value === savedRetentionValue/);
-  assert.match(rendererBatchHistorySource, /savedRetentionValue = normalizeRetentionValue\(settings\.retentionDays\)[\s\S]*?updateSaveButton\(\)/);
-  assert.match(rendererBatchHistorySource, /retentionSelect\?\.addEventListener\('change', updateSaveButton\)/);
+test('desktop content header omits duplicate SnapOverLAN branding', () => {
+  const contentHeader = rendererMarkup.match(/<header class="title-row">[\s\S]*?<\/header>/)?.[0];
+  assert.ok(contentHeader);
+  assert.doesNotMatch(contentHeader, /SnapOverLAN|snapoverlan-mark/);
+  assert.doesNotMatch(rendererStyles, /\.brand-lockup|\.brand-logo|\.brand-lan/);
+});
+
+test('Electron companion window uses compact resizable bounds', () => {
+  assert.match(desktopShellSource, /width:\s*540/);
+  assert.match(desktopShellSource, /height:\s*580/);
+  assert.match(desktopShellSource, /minWidth:\s*480/);
+  assert.match(desktopShellSource, /resizable:\s*true/);
+});
+
+test('Electron companion uses native dark title bar controls and remains draggable', () => {
+  assert.match(desktopShellSource, /titleBarStyle:\s*'hidden'/);
+  assert.match(desktopShellSource, /titleBarOverlay:\s*\{[\s\S]*?color:\s*'#343940'/);
+  assert.match(desktopShellSource, /symbolColor:\s*'#f5fdff'/);
+  assert.match(desktopShellSource, /height:\s*32/);
+  assert.match(rendererMarkup, /class="titlebar-drag-region"[^>]*aria-hidden="true"/);
+  assert.match(rendererMarkup, /class="titlebar-brand"[\s\S]*?snapoverlan-mark\.svg[\s\S]*?SnapOverLAN/);
+  assert.match(rendererStyles, /\.titlebar-drag-region[\s\S]*?height:\s*32px[\s\S]*?app-region:\s*drag/);
+  assert.match(rendererStyles, /\.titlebar-brand[\s\S]*?pointer-events:\s*none/);
+  assert.match(rendererStyles, /\.title-row[\s\S]*?app-region:\s*drag/);
+  assert.match(rendererStyles, /\.server-controls,[\s\S]*?\.header-actions[\s\S]*?app-region:\s*no-drag/);
+});
+
+test('retention controls are not exposed in desktop batch history', () => {
+  assert.doesNotMatch(rendererMarkup, /retentionSelect|saveRetentionBtn|Retention setting/);
+  assert.doesNotMatch(rendererBatchHistorySource, /storage-settings|retentionSelect|saveRetention/);
+  assert.doesNotMatch(rendererStyles, /\.retention-select/);
 });
 
 test('verified reused server requires authentication and shuts down gracefully', async (t) => {

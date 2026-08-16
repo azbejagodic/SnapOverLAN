@@ -24,36 +24,31 @@ const formatBatchZipName = (batchTimestamp) => {
 };
 
 const createBatchHistory = ({
-  batchesButton,
   batchesList,
   clearButton,
   clearMessage,
-  closeButton,
+  downloadButton,
   fetchJson,
   formatBytes,
-  onBatchesChanged,
-  onLayoutChanged,
-  panel,
-  picturesPanel,
-  retentionSelect,
-  saveButton,
+  serverUrl,
   setMessage,
 }) => {
   let batches = [];
   let refreshPromise = null;
-  let savedRetentionValue = null;
 
-  const normalizeRetentionValue = (value) => (value ? String(value) : '');
+  const getCurrentBatch = () => batches.find((batch) => batch.current);
 
-  const updateSaveButton = () => {
-    if (!retentionSelect || !saveButton) return;
-    saveButton.disabled = savedRetentionValue !== null
-      && retentionSelect.value === savedRetentionValue;
+  const updateDownloadButton = () => {
+    if (!downloadButton) return;
+    const currentBatch = getCurrentBatch();
+    downloadButton.disabled = !currentBatch || currentBatch.fileCount === 0;
   };
 
   const render = () => {
     if (!batchesList) return;
     batchesList.textContent = '';
+    updateDownloadButton();
+
     if (!batches.length) {
       const empty = document.createElement('p');
       empty.className = 'batches-empty';
@@ -96,23 +91,11 @@ const createBatchHistory = ({
   };
 
   const load = async () => {
-    if (!panel || panel.hidden) return;
     if (refreshPromise) return refreshPromise;
     refreshPromise = (async () => {
       try {
-        const [batchData, settings] = await Promise.all([
-          fetchJson('/api/batches'),
-          fetchJson('/api/storage-settings'),
-        ]);
+        const batchData = await fetchJson('/api/batches');
         batches = Array.isArray(batchData.batches) ? batchData.batches : [];
-        if (retentionSelect) {
-          const loadedValue = normalizeRetentionValue(settings.retentionDays);
-          if (savedRetentionValue === null || retentionSelect.value === savedRetentionValue) {
-            retentionSelect.value = loadedValue;
-          }
-          savedRetentionValue = loadedValue;
-          updateSaveButton();
-        }
         render();
       } catch (error) {
         setMessage(error.message || 'Could not load batches.');
@@ -123,8 +106,7 @@ const createBatchHistory = ({
     return refreshPromise;
   };
 
-  const refreshPicturesAndHistory = async () => {
-    await onBatchesChanged();
+  const refresh = async () => {
     await load();
     clearMessage();
   };
@@ -132,7 +114,7 @@ const createBatchHistory = ({
   async function selectBatch(id) {
     try {
       await fetchJson(`/api/batches/${encodeURIComponent(id)}/select`, { method: 'POST' });
-      await refreshPicturesAndHistory();
+      await refresh();
     } catch (error) {
       setMessage(error.message || 'Could not select batch.');
     }
@@ -142,7 +124,7 @@ const createBatchHistory = ({
     if (!window.confirm(`Delete the batch from ${formatBatchDate(batch.createdAt)}?`)) return;
     try {
       await fetchJson(`/api/batches/${encodeURIComponent(batch.id)}`, { method: 'DELETE' });
-      await refreshPicturesAndHistory();
+      await refresh();
     } catch (error) {
       setMessage(error.message || 'Could not delete batch.');
     }
@@ -152,67 +134,42 @@ const createBatchHistory = ({
     if (!window.confirm('Clear all saved batches? This cannot be undone.')) return;
     try {
       await fetchJson('/api/batches', { method: 'DELETE' });
-      await refreshPicturesAndHistory();
+      await refresh();
     } catch (error) {
       setMessage(error.message || 'Could not clear batches.');
     }
   };
 
-  const saveRetention = async () => {
+  const downloadCurrentBatch = async () => {
+    const currentBatch = getCurrentBatch();
+    if (!currentBatch || currentBatch.fileCount === 0 || !downloadButton) return;
+
+    downloadButton.disabled = true;
+    downloadButton.textContent = 'Downloading...';
     try {
-      const value = retentionSelect?.value || '';
-      const settings = await fetchJson('/api/storage-settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ retentionDays: value ? Number(value) : null }),
-      });
-      savedRetentionValue = normalizeRetentionValue(settings.retentionDays);
-      updateSaveButton();
-      await load();
+      const response = await fetch(serverUrl('/api/latest/download'));
+      if (!response.ok) throw new Error(`Download failed (${response.status})`);
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = formatBatchZipName(currentBatch.createdAt);
+      link.click();
+      URL.revokeObjectURL(objectUrl);
       clearMessage();
     } catch (error) {
-      setMessage(error.message || 'Could not save retention setting.');
+      setMessage(error.message || 'Could not download the current batch.');
+    } finally {
+      downloadButton.textContent = 'Download current batch';
+      updateDownloadButton();
     }
-  };
-
-  const setOpen = (isOpen) => {
-    if (!panel) return;
-    panel.hidden = !isOpen;
-    picturesPanel?.classList.toggle('history-open', isOpen);
-    batchesButton?.classList.toggle('active', isOpen);
-    onLayoutChanged();
-    if (isOpen) {
-      load();
-      closeButton?.focus();
-    } else {
-      batchesButton?.focus();
-    }
-  };
-
-  const getCurrentBatchZipName = async () => {
-    let currentBatch = batches.find((batch) => batch.current);
-    if (!currentBatch) {
-      try {
-        const batchData = await fetchJson('/api/batches');
-        batches = Array.isArray(batchData.batches) ? batchData.batches : [];
-        currentBatch = batches.find((batch) => batch.current);
-        if (batches.length) render();
-      } catch {
-        // Fall back to the current local time if metadata is unavailable.
-      }
-    }
-    return formatBatchZipName(currentBatch?.createdAt);
   };
 
   const bind = () => {
-    batchesButton?.addEventListener('click', () => setOpen(true));
-    closeButton?.addEventListener('click', () => setOpen(false));
-    saveButton?.addEventListener('click', saveRetention);
-    retentionSelect?.addEventListener('change', updateSaveButton);
+    downloadButton?.addEventListener('click', downloadCurrentBatch);
     clearButton?.addEventListener('click', clearAll);
   };
 
-  return { bind, getCurrentBatchZipName, load };
+  return { bind, load };
 };
 
 export { createBatchHistory };

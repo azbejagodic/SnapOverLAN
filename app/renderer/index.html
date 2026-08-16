@@ -8,6 +8,12 @@
 </head>
 <body>
   <main class="app-shell" aria-label="SnapOverLAN">
+    <div class="titlebar-drag-region" aria-hidden="true">
+      <span class="titlebar-brand">
+        <img class="titlebar-brand-icon" src="../../assets/branding/snapoverlan-mark.svg" alt="" />
+        <span>SnapOverLAN</span>
+      </span>
+    </div>
     <header class="title-row">
       <div class="server-controls">
         <p id="connectionPill" class="server-line checking" aria-live="polite">
@@ -17,71 +23,23 @@
         <button id="backgroundToggleBtn" class="header-toggle" type="button" aria-label="Turn background mode on" aria-pressed="false">Background: Off</button>
         <button id="retryServerBtn" class="header-toggle" type="button" hidden>Retry server</button>
       </div>
-      <h1 class="brand-lockup"><img class="brand-logo" src="../../assets/branding/snapoverlan-mark.svg" alt="" /><span class="brand">SnapOver<span class="brand-lan">LAN</span></span></h1>
       <div class="header-actions">
         <button id="qrBtn" class="header-button qr-button" type="button">QR</button>
         <button id="refreshBtn" class="header-button refresh-button" type="button">Refresh</button>
       </div>
     </header>
 
-    <section class="main-grid" aria-label="Photos">
-      <article class="panel pictures-panel" aria-labelledby="photosTitle">
-        <div class="pictures-header">
-          <h2 id="photosTitle">Pictures</h2>
-          <div class="pictures-tools">
-            <div class="view-toggle" role="group" aria-label="Pictures view">
-              <button id="gridViewBtn" class="view-toggle-button" type="button">Grid</button>
-              <button id="listViewBtn" class="view-toggle-button" type="button">List</button>
-            </div>
-            <label class="grid-count-control" for="gridCountSelect">
-              <span>Grid</span>
-              <select id="gridCountSelect" aria-label="Grid photos per page">
-                <option value="auto">Auto</option>
-                <option value="4">4</option>
-                <option value="8">8</option>
-                <option value="12">12</option>
-                <option value="16">16</option>
-              </select>
-            </label>
-            <button id="batchesBtn" class="download-all-button" type="button">History</button>
-            <button id="downloadAllBtn" class="download-all-button" type="button" hidden>Download all</button>
-            <div id="picturePagination" class="picture-pagination" hidden>
-              <button id="prevPicturesPage" class="page-button" type="button" aria-label="Previous page">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M15 18l-6-6 6-6" />
-                </svg>
-              </button>
-              <span id="picturesPageLabel" class="page-label">1 / 1</span>
-              <button id="nextPicturesPage" class="page-button" type="button" aria-label="Next page">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M9 6l6 6-6 6" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-        <p id="picturesMessage" class="pictures-message" hidden></p>
-        <section id="batchesPanel" class="batches-panel" aria-label="Saved upload batches" hidden>
-          <div class="batches-toolbar">
-            <strong>Batches</strong>
-            <button id="closeBatchesBtn" class="batch-button back-to-pictures-button" type="button">Back to Pictures</button>
-            <select id="retentionSelect" class="retention-select" aria-label="Retention setting">
-              <option value="">No automatic deletion</option>
-              <option value="1">Delete after 1 day</option>
-              <option value="7">Delete after 7 days</option>
-              <option value="30">Delete after 30 days</option>
-            </select>
-            <button id="saveRetentionBtn" class="batch-button" type="button">Save</button>
+    <section class="main-grid" aria-label="Recent batches">
+      <article class="panel batches-workspace" aria-labelledby="batchesTitle">
+        <div class="batches-header">
+          <h2 id="batchesTitle">Recent batches</h2>
+          <div class="batch-toolbar-actions">
+            <button id="downloadCurrentBatchBtn" class="batch-button" type="button" disabled>Download current batch</button>
             <button id="clearBatchesBtn" class="batch-button danger" type="button">Clear all</button>
           </div>
-          <div id="batchesList" class="batches-list" tabindex="0" aria-label="Saved batches list"></div>
-        </section>
-
-        <div id="emptyState" class="empty-state" hidden>
-          <h3 id="emptyStateTitle">No pictures yet</h3>
         </div>
-
-        <div id="photoGrid" class="photo-grid"></div>
+        <p id="batchMessage" class="batch-message" hidden></p>
+        <div id="batchesList" class="batches-list" tabindex="0" aria-label="Recent batches list"></div>
       </article>
     </section>
 

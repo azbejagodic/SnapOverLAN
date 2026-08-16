@@ -268,7 +268,14 @@ ipcMain.handle('batch:download', async (event, batchId) => {
     throw new Error('Batch download request was rejected.');
   }
   const destinationDir = electronApp.getPath('downloads');
-  return downloadBatchToFolder({ batchId, destinationDir, serverOrigin: SERVER_ORIGIN });
+  const result = await downloadBatchToFolder({
+    batchId,
+    destinationDir,
+    serverOrigin: SERVER_ORIGIN,
+  });
+  const openError = await shell.openPath(destinationDir);
+  if (openError) console.warn('Could not open the Downloads folder:', openError);
+  return result;
 });
 ipcMain.handle('image:copy', (event, imageBytes) => {
   if (!desktopShell.isMainWindowSender(event.sender)) {

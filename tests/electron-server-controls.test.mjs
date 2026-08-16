@@ -401,13 +401,20 @@ test('recent batches are the primary workspace with selection, download, and del
 });
 
 test('Electron downloads batch files directly to the standard Downloads directory', () => {
+  const downloadHandlerSource = mainSource.match(
+    /ipcMain\.handle\('batch:download'[\s\S]*?\n\}\);/,
+  )?.[0];
+  assert.ok(downloadHandlerSource);
   assert.match(
-    mainSource,
+    downloadHandlerSource,
     /ipcMain\.handle\('batch:download'[\s\S]*?desktopShell\.isMainWindowSender\(event\.sender\)/,
   );
-  assert.match(mainSource, /const destinationDir = electronApp\.getPath\('downloads'\)/);
-  assert.doesNotMatch(mainSource, /showOpenDialog|openDirectory|createDirectory|Choose folder/);
-  assert.match(mainSource, /downloadBatchToFolder\(\{ batchId, destinationDir, serverOrigin: SERVER_ORIGIN \}\)/);
+  assert.match(downloadHandlerSource, /const destinationDir = electronApp\.getPath\('downloads'\)/);
+  assert.doesNotMatch(downloadHandlerSource, /showOpenDialog|openDirectory|createDirectory|Choose folder/);
+  assert.match(
+    downloadHandlerSource,
+    /const result = await downloadBatchToFolder\([\s\S]*?await shell\.openPath\(destinationDir\)[\s\S]*?return result/,
+  );
   assert.match(desktopBatchDownloadSource, /Buffer\.from\(await fileResponse\.arrayBuffer\(\)\)/);
   assert.match(desktopBatchDownloadSource, /writeFile[\s\S]*?flag:\s*'wx'/);
   assert.match(desktopBatchDownloadSource, /`\$\{stem\} \(\$\{suffix\}\)\$\{extension\}`/);

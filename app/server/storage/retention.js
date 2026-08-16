@@ -11,6 +11,7 @@ import {
 
 const DEFAULT_STORAGE_SETTINGS = { retentionDays: null };
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_RETAINED_BATCHES = 10;
 let retentionCleanupQueue = Promise.resolve();
 
 const getStorageSettings = async () => ({
@@ -22,21 +23,27 @@ const applyBatchRetention = ({ now = new Date() } = {}) => {
   const cleanup = async () => {
     const settings = await getStorageSettings();
     const retentionDays = Number(settings.retentionDays);
-    if (!Number.isFinite(retentionDays) || retentionDays <= 0) return [];
-    const cutoff = now.getTime() - (retentionDays * DAY_MS);
     const batches = await listBatches();
-    const expiredBatchIds = batches
-      .filter((batch) => {
-        const createdAt = new Date(batch.createdAt).getTime();
-        return Number.isFinite(createdAt) && createdAt < cutoff;
-      })
-      .map((batch) => batch.id);
-    if (expiredBatchIds.length === 0) return [];
-    await Promise.all(expiredBatchIds.map((id) => (
+    const expiredBatchIds = [];
+    if (Number.isFinite(retentionDays) && retentionDays > 0) {
+      const cutoff = now.getTime() - (retentionDays * DAY_MS);
+      expiredBatchIds.push(...batches
+        .filter((batch) => {
+          const createdAt = new Date(batch.createdAt).getTime();
+          return Number.isFinite(createdAt) && createdAt < cutoff;
+        })
+        .map((batch) => batch.id));
+    }
+    const removedBatchIds = [...new Set([
+      ...expiredBatchIds,
+      ...batches.slice(MAX_RETAINED_BATCHES).map((batch) => batch.id),
+    ])];
+    if (removedBatchIds.length === 0) return [];
+    await Promise.all(removedBatchIds.map((id) => (
       fs.rm(resolveBatchDir(id), { recursive: true, force: true })
     )));
-    if (expiredBatchIds.includes(await getCurrentBatchId())) await selectNewestRemainingBatch();
-    return expiredBatchIds;
+    if (removedBatchIds.includes(await getCurrentBatchId())) await selectNewestRemainingBatch();
+    return removedBatchIds;
   };
 
   const cleanupPromise = retentionCleanupQueue.then(cleanup, cleanup);

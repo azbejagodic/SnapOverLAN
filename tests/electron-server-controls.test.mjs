@@ -237,12 +237,13 @@ test('server identity contract recognizes current, legacy, and unrelated respons
   assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.shutdownToken\)/);
 });
 
-test('server startup is mandatory, awaited, and cannot start a duplicate', () => {
+test('server startup settles before the renderer loads and a failure still creates the window', () => {
   assert.match(desktopShellSource, /show: false/);
   assert.match(
     mainSource,
-    /await desktopShell\.createWindow\(\);[\s\S]*?await startServer\(\)\.catch[\s\S]*?desktopShell\.showMainWindow\(\)/,
+    /await loadSettings\(\);[\s\S]*?await startServer\(\)\.catch\(\(error\) => \{[\s\S]*?console\.error\('SnapOverLAN server startup failed:', error\);[\s\S]*?\}\);[\s\S]*?await desktopShell\.createWindow\(\);[\s\S]*?desktopShell\.showMainWindow\(\)/,
   );
+  assert.match(desktopShellSource, /await mainWindow\.loadFile\(rendererPath,/);
   assert.match(
     desktopServerManagerSource,
     /if \(serverOperationType === 'start'\) return serverOperation/,

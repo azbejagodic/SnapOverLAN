@@ -300,10 +300,10 @@ if (!gotLock) {
 
   electronApp.whenReady().then(async () => {
     await loadSettings();
-    await desktopShell.createWindow();
     await startServer().catch((error) => {
       console.error('SnapOverLAN server startup failed:', error);
     });
+    await desktopShell.createWindow();
     if (backgroundMode) {
       desktopShell.createTray();
     }

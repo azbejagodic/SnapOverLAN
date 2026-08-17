@@ -71,8 +71,8 @@ const createHostnameResponder = ({
   };
 
   const sendAnswer = ({ mode, remote }) => {
-    const unicast = mode === 'unicast';
-    const destination = unicast
+    const direct = mode === 'unicast' || mode === 'compat-unicast';
+    const destination = direct
       ? { address: remote.address, port: remote.port }
       : { address: MDNS_MULTICAST_ADDRESS, port: MDNS_PORT };
     const onSent = (error) => {
@@ -84,7 +84,7 @@ const createHostnameResponder = ({
     };
 
     try {
-      if (unicast) mdnsSocket.respond({ answers: [answer] }, destination, onSent);
+      if (direct) mdnsSocket.respond({ answers: [answer] }, destination, onSent);
       else mdnsSocket.respond({ answers: [answer] }, onSent);
     } catch (error) {
       onSent(error);
@@ -92,6 +92,11 @@ const createHostnameResponder = ({
   };
 
   const handleQuery = (packet, remote = {}) => {
+    const hasValidRemote = typeof remote.address === 'string'
+      && remote.address.length > 0
+      && Number.isInteger(remote.port)
+      && remote.port > 0
+      && remote.port <= 65535;
     let shouldSendMulticast = false;
     let shouldSendUnicast = false;
     for (const question of packet.questions || []) {
@@ -111,10 +116,17 @@ const createHostnameResponder = ({
       else shouldSendMulticast = true;
     }
 
-    if (shouldSendUnicast && remote.address && remote.port) {
+    if (shouldSendUnicast && hasValidRemote) {
       sendAnswer({ mode: 'unicast', remote });
     }
-    if (shouldSendMulticast) sendAnswer({ mode: 'multicast', remote });
+    if (shouldSendMulticast) {
+      sendAnswer({ mode: 'multicast', remote });
+      // Some LAN/Wi-Fi configurations deliver client mDNS queries to the PC but
+      // do not reliably deliver multicast responses back to the client.
+      if (!shouldSendUnicast && hasValidRemote) {
+        sendAnswer({ mode: 'compat-unicast', remote });
+      }
+    }
   };
 
   mdnsSocket.on('query', handleQuery);

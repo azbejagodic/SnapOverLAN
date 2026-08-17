@@ -214,25 +214,28 @@ test('mDNS service leaves hostname A/AAAA ownership to the explicit responder', 
   assert.deepEqual(fixture.events, ['unpublish', 'destroy']);
 });
 
-test('normal A and ANY questions produce one multicast flush A answer', async () => {
+test('normal A and ANY questions produce multicast and compatibility-unicast A answers', async () => {
   const fixture = await createAdvertiserFixture();
   const hostname = fixture.status.hostname;
   const remote = { address: '192.168.1.50', port: 5353 };
   const query = createDecodedHostnameQuery({ hostname });
-
-  assert.deepEqual(query.questions.map(({ type }) => type), ['UNKNOWN_65', 'AAAA', 'A']);
-  fixture.mdnsSocket.emit('query', query, remote);
-
-  assert.equal(fixture.responses.length, 1);
-  assert.equal(fixture.responses[0].destination, null);
-  assert.deepEqual(fixture.responses[0].packet.answers, [{
+  const expectedAnswers = [{
     name: hostname,
     type: 'A',
     class: 'IN',
     flush: true,
     ttl: 120,
     data: '192.168.1.25',
-  }]);
+  }];
+
+  assert.deepEqual(query.questions.map(({ type }) => type), ['UNKNOWN_65', 'AAAA', 'A']);
+  fixture.mdnsSocket.emit('query', query, remote);
+
+  assert.equal(fixture.responses.length, 2);
+  assert.equal(fixture.responses[0].destination, null);
+  assert.deepEqual(fixture.responses[1].destination, remote);
+  assert.deepEqual(fixture.responses[0].packet.answers, expectedAnswers);
+  assert.deepEqual(fixture.responses[1].packet.answers, expectedAnswers);
   assert.match(fixture.logs.join('\n'), /qtype=UNKNOWN_65[^\n]*QU=false/);
   assert.match(fixture.logs.join('\n'), /qtype=AAAA[^\n]*QU=false/);
   assert.match(fixture.logs.join('\n'), /qtype=A rawQclass=IN qclassCode=1 decodedQclass=IN QU=false/);
@@ -240,16 +243,43 @@ test('normal A and ANY questions produce one multicast flush A answer', async ()
     fixture.logs.join('\n'),
     /destination=224\.0\.0\.251:5353 mode=multicast result=success/,
   );
+  assert.match(
+    fixture.logs.join('\n'),
+    /destination=192\.168\.1\.50:5353 mode=compat-unicast result=success/,
+  );
 
   const anyQuery = createDecodedHostnameQuery({ hostname, qtype: 'ANY' });
   fixture.mdnsSocket.emit('query', anyQuery, remote);
-  assert.equal(fixture.responses.length, 2);
-  assert.deepEqual(fixture.responses[1].packet.answers, fixture.responses[0].packet.answers);
+  assert.equal(fixture.responses.length, 4);
+  assert.equal(fixture.responses[2].destination, null);
+  assert.deepEqual(fixture.responses[3].destination, remote);
+  assert.deepEqual(fixture.responses[2].packet.answers, expectedAnswers);
+  assert.deepEqual(fixture.responses[3].packet.answers, expectedAnswers);
+
+  fixture.mdnsSocket.emit('query', {
+    questions: [
+      { name: hostname, type: 'UNKNOWN_65', class: 'IN' },
+      { name: hostname, type: 'AAAA', class: 'IN' },
+    ],
+  }, remote);
+  assert.equal(fixture.responses.length, 4);
 
   fixture.mdnsSocket.emit('query', {
     questions: [{ name: `other-${hostname}`, type: 'A', class: 'IN' }],
   }, remote);
-  assert.equal(fixture.responses.length, 2);
+  assert.equal(fixture.responses.length, 4);
+
+  fixture.mdnsSocket.emit('query', {
+    questions: [{ name: hostname, type: 'A', class: 'CH' }],
+  }, remote);
+  assert.equal(fixture.responses.length, 4);
+
+  fixture.mdnsSocket.emit('query', {
+    questions: [{ name: hostname, type: 'A', class: 'IN' }],
+  });
+  assert.equal(fixture.responses.length, 5);
+  assert.equal(fixture.responses[4].destination, null);
+  assert.deepEqual(fixture.responses[4].packet.answers, expectedAnswers);
 
   await fixture.advertiser.stop();
   assert.equal(fixture.mdnsSocket.listenerCount('query'), 0);
@@ -285,6 +315,7 @@ test('QU A question produces one unicast answer to the requesting address and po
     fixture.logs.join('\n'),
     /destination=192\.168\.1\.51:5353 mode=unicast result=success/,
   );
+  assert.doesNotMatch(fixture.logs.join('\n'), /mode=compat-unicast/);
 
   fixture.setResponseError(new Error('simulated send failure'));
   fixture.mdnsSocket.emit('query', query, remote);

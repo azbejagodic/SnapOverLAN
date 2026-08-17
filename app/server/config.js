@@ -15,7 +15,6 @@ const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configure
 const HOST = '0.0.0.0';
 const MAX_FILES = 20;
 const MAX_FILE_SIZE = 12 * 1024 * 1024;
-const MAX_VIDEO_FILE_SIZE = 100 * 1024 * 1024;
 
 const DATA_ROOT = snapEnv('DATA_DIR') || path.join(PROJECT_ROOT, 'data');
 const DATA_DIR = path.join(DATA_ROOT, 'latest');
@@ -38,7 +37,6 @@ export {
   LAUNCH_SOURCE,
   MAX_FILES,
   MAX_FILE_SIZE,
-  MAX_VIDEO_FILE_SIZE,
   PORT,
   PROJECT_ROOT,
   PWA_DIR,

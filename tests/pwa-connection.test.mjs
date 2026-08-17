@@ -40,7 +40,7 @@ class FakeElement {
 
 function createHarness(fetchImpl = async () => ({ ok: true })) {
   const ids = [
-    'cameraInput', 'videoInput', 'galleryInput', 'uploadBtn', 'status',
+    'cameraInput', 'galleryInput', 'uploadBtn', 'status',
     'selectedGrid', 'selectedCount',
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
@@ -101,6 +101,29 @@ test('restored PWA shell has no connection-status UI or styling', () => {
   assert.doesNotMatch(source, /connecting|connected|disconnected|addEventListener\('online'|addEventListener\('offline'/);
 });
 
+test('phone interface exposes only approved photo inputs and rejects video selections', async () => {
+  const supportedTypes = 'image/jpeg,image/png,image/webp,image/heic,image/heif';
+  assert.doesNotMatch(markup, /videoInput|Record video|video\//i);
+  assert.doesNotMatch(
+    source,
+    /isVideoFile|normalizeRecordedVideo|videoInput|video\/(?:mp4|quicktime|webm)|\.(?:mp4|mov|webm)/i,
+  );
+  assert.doesNotMatch(styles, /\.video-/i);
+  assert.match(markup, new RegExp(`id="cameraInput"[^>]*accept="${supportedTypes}"`));
+  assert.match(markup, new RegExp(`id="galleryInput"[^>]*accept="${supportedTypes}"`));
+
+  const elements = createHarness();
+  elements.galleryInput.files = [{ name: 'clip.mp4', type: 'video/mp4', size: 10 }];
+  await elements.galleryInput.dispatch('change');
+  assert.equal(elements.uploadBtn.disabled, true);
+  assert.match(elements.status.textContent, /Only JPEG, PNG, WebP, HEIC, and HEIF photos/);
+
+  elements.galleryInput.files = [{ name: 'photo.heic', type: 'image/heic', size: 10 }];
+  await elements.galleryInput.dispatch('change');
+  assert.equal(elements.uploadBtn.disabled, false);
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 20');
+});
+
 test('application mounts without making a startup server request', () => {
   let fetchCount = 0;
   const elements = createHarness(async () => {
@@ -109,7 +132,7 @@ test('application mounts without making a startup server request', () => {
   });
 
   assert.equal(fetchCount, 0);
-  assert.equal(elements.status.textContent, 'No files selected yet.');
+  assert.equal(elements.status.textContent, 'No photos selected yet.');
   assert.equal(elements.uploadBtn.disabled, true);
 });
 
@@ -133,7 +156,7 @@ test('legacy app-shell worker and cache cleanup cannot block startup', async () 
   const unregister = async () => { throw new Error('already gone'); };
   const contextSource = source;
   const ids = [
-    'cameraInput', 'videoInput', 'galleryInput', 'uploadBtn', 'status',
+    'cameraInput', 'galleryInput', 'uploadBtn', 'status',
     'selectedGrid', 'selectedCount',
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
@@ -152,5 +175,5 @@ test('legacy app-shell worker and cache cleanup cannot block startup', async () 
 
   assert.doesNotThrow(() => vm.runInContext(contextSource, context, { filename: 'pwa/app.js' }));
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(elements.status.textContent, 'No files selected yet.');
+  assert.equal(elements.status.textContent, 'No photos selected yet.');
 });

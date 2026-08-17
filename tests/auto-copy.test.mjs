@@ -193,18 +193,17 @@ test('auto-copy API loopback detection ignores forwarded addresses', () => {
   }), false);
 });
 
-test('the upload route emits one event with the first image from an ordered mixed batch', async () => {
+test('the upload route emits one event with the first image from an ordered photo batch', async () => {
   const events = [];
   completionHandler = (event) => events.push(event);
 
   const { response, body } = await uploadFiles([
-    { name: 'clip.mp4', type: 'video/mp4' },
     { name: 'first.png', type: 'image/png' },
     { name: 'second.jpg', type: 'image/jpeg' },
   ]);
 
   assert.equal(response.status, 200);
-  assert.equal(body.files.length, 3);
+  assert.equal(body.files.length, 2);
   assert.equal(events.length, 1);
   assert.equal(events[0].type, UPLOAD_COMPLETED_EVENT);
   assert.match(events[0].batchId, /^batch_/);
@@ -213,16 +212,19 @@ test('the upload route emits one event with the first image from an ordered mixe
   assert.equal(path.isAbsolute(events[0].firstImage.path), true);
 });
 
-test('video-only and empty batches do not emit image-copy requests', async () => {
+test('video uploads are rejected and empty batches do not emit image-copy requests', async () => {
   const events = [];
   completionHandler = (event) => events.push(event);
 
-  const videoUpload = await uploadFiles([
-    { name: 'clip.mp4', type: 'video/mp4' },
+  const videoUploads = await Promise.all([
+    uploadFiles([{ name: 'clip.mp4', type: 'video/mp4' }]),
+    uploadFiles([{ name: 'clip.mov', type: 'video/quicktime' }]),
+    uploadFiles([{ name: 'clip.webm', type: 'video/webm' }]),
   ]);
   const emptyUpload = await uploadFiles([]);
 
-  assert.equal(videoUpload.response.status, 200);
+  assert.deepEqual(videoUploads.map(({ response }) => response.status), [400, 400, 400]);
+  for (const { body } of videoUploads) assert.match(body.error, /Only JPEG, PNG, WebP, HEIC, and HEIF images/);
   assert.equal(emptyUpload.response.status, 200);
   assert.equal(events.length, 0);
 });

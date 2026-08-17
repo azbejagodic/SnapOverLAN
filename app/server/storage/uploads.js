@@ -4,7 +4,6 @@ import { promises as fs } from 'fs';
 import {
   MAX_FILES,
   MAX_FILE_SIZE,
-  MAX_VIDEO_FILE_SIZE,
 } from '../config.js';
 import {
   createBatchId,
@@ -16,19 +15,19 @@ import {
 } from './batches.js';
 import { applyBatchRetention } from './retention.js';
 
-const ALLOWED_VIDEO_MIME_TYPES = new Set([
-  'video/mp4',
-  'video/quicktime',
-  'video/webm',
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
 ]);
-const MAX_UPLOAD_FILE_SIZE = Math.max(MAX_FILE_SIZE, MAX_VIDEO_FILE_SIZE);
+const IMAGE_UPLOAD_ERROR = 'Only JPEG, PNG, WebP, HEIC, and HEIF images are allowed.';
 const formatMegabytes = (bytes) => `${Math.round(bytes / (1024 * 1024))}MB`;
 
-const getUploadMediaType = (file) => {
-  if (file.mimetype.startsWith('image/')) return 'photo';
-  if (ALLOWED_VIDEO_MIME_TYPES.has(file.mimetype)) return 'video';
-  return '';
-};
+const isAllowedImageMimeType = (mimeType) => (
+  typeof mimeType === 'string' && ALLOWED_IMAGE_MIME_TYPES.has(mimeType.toLowerCase())
+);
 
 const initUploadBatch = (req) => {
   if (req.uploadBatchTimestamp) return;
@@ -37,11 +36,7 @@ const initUploadBatch = (req) => {
   req.uploadBatchId = createBatchId(req.uploadBatchTimestamp);
   req.uploadBatchDir = resolveBatchDir(req.uploadBatchId);
   req.uploadBatchCreatedAt = createdAt.toISOString();
-  req.uploadBatchCounts = { photo: 0, video: 0 };
-};
-
-const removeUploadedFiles = async (files = []) => {
-  await Promise.all(files.map((file) => fs.rm(file.path, { force: true })));
+  req.uploadBatchPhotoCount = 0;
 };
 
 const removeUploadBatch = async (req) => {
@@ -59,23 +54,6 @@ const finalizeUploadedBatch = async (req) => {
   return toUploadedFileRecords(req.files);
 };
 
-const validateUploadedFiles = async (req, _res, next) => {
-  try {
-    for (const file of req.files || []) {
-      const mediaType = getUploadMediaType(file);
-      const maxSize = mediaType === 'video' ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE;
-      if (file.size > maxSize) {
-        await removeUploadedFiles(req.files);
-        await removeUploadBatch(req);
-        const label = mediaType === 'video' ? 'video' : 'image';
-        next(new Error(`Each ${label} must be <= ${formatMegabytes(maxSize)}.`));
-        return;
-      }
-    }
-    next();
-  } catch (err) { next(err); }
-};
-
 const storage = multer.diskStorage({
   destination: async (req, _file, cb) => {
     try {
@@ -86,24 +64,23 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     initUploadBatch(req);
-    const mediaType = getUploadMediaType(file);
-    if (!mediaType) {
-      cb(new Error('Only image, MP4, MOV, or WebM files are allowed.'));
+    if (!isAllowedImageMimeType(file.mimetype)) {
+      cb(new Error(IMAGE_UPLOAD_ERROR));
       return;
     }
-    req.uploadBatchCounts[mediaType] += 1;
+    req.uploadBatchPhotoCount += 1;
     const ext = path.extname(file.originalname).toLowerCase();
-    const mediaNumber = String(req.uploadBatchCounts[mediaType]).padStart(3, '0');
-    cb(null, `snapoverlan_${req.uploadBatchTimestamp}_${mediaType}-${mediaNumber}${ext}`);
+    const photoNumber = String(req.uploadBatchPhotoCount).padStart(3, '0');
+    cb(null, `snapoverlan_${req.uploadBatchTimestamp}_photo-${photoNumber}${ext}`);
   },
 });
 
 const upload = multer({
   storage,
-  limits: { files: MAX_FILES, fileSize: MAX_UPLOAD_FILE_SIZE },
+  limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE },
   fileFilter: (_req, file, cb) => {
-    if (getUploadMediaType(file)) { cb(null, true); return; }
-    cb(new Error('Only image, MP4, MOV, or WebM files are allowed.'));
+    if (isAllowedImageMimeType(file.mimetype)) { cb(null, true); return; }
+    cb(new Error(IMAGE_UPLOAD_ERROR));
   },
 });
 
@@ -114,7 +91,7 @@ const uploadErrorHandler = async (err, req, res, next) => {
     let message = err.message;
     if (err.code === 'LIMIT_FILE_COUNT') message = `Maximum ${MAX_FILES} files are allowed.`;
     if (err.code === 'LIMIT_FILE_SIZE') {
-      message = `Each video must be <= ${formatMegabytes(MAX_VIDEO_FILE_SIZE)}. Images must be <= ${formatMegabytes(MAX_FILE_SIZE)}.`;
+      message = `Each image must be <= ${formatMegabytes(MAX_FILE_SIZE)}.`;
     }
     res.status(400).json({ error: message });
     return;
@@ -124,7 +101,7 @@ const uploadErrorHandler = async (err, req, res, next) => {
 
 export {
   finalizeUploadedBatch,
+  isAllowedImageMimeType,
   upload,
   uploadErrorHandler,
-  validateUploadedFiles,
 };

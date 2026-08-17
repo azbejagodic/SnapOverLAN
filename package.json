@@ -1,7 +1,7 @@
 {
   "name": "snap-over-lan",
   "version": "1.0.0",
-  "description": "Local LAN media transfer bridge between phone and PC",
+  "description": "Local LAN photo transfer bridge between phone and PC",
   "type": "module",
   "main": "app/main.js",
   "scripts": {

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import cors from 'cors';
 import express from 'express';
+import { createLanAccessPolicy } from './access-policy.js';
 import { PWA_DIR } from './config.js';
 import { createApiRouter } from './routes/api.js';
 import { createFilesRouter } from './routes/files.js';
@@ -15,11 +16,19 @@ const createServerApp = ({
   shutdownToken = crypto.randomBytes(32).toString('hex'),
 }) => {
   const app = express();
-
-  app.use(cors({
+  const loopbackCors = cors({
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  }));
+  });
+
+  app.use(createLanAccessPolicy({ isLoopbackRequest }));
+  app.use((req, res, next) => {
+    if (!isLoopbackRequest(req)) {
+      next();
+      return;
+    }
+    loopbackCors(req, res, next);
+  });
 
   app.use('/api', express.json({ limit: '32kb' }), createApiRouter({
     getAutoCopySetting,

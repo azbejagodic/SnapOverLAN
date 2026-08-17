@@ -32,7 +32,7 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new Error('Could not load media. Try Refresh again.');
+      throw new Error('Could not load photos. Try Refresh again.');
     }
     throw error;
   } finally {

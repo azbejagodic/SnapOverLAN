@@ -25,30 +25,21 @@
         <label class="input-btn" for="cameraInput">Take photo</label>
         <!--
           Camera input:
-          - accept="image/*" limits the picker to image files.
+          - accept limits the picker to supported photo formats.
           - capture="environment" hints rear camera on supported phones.
           - We intentionally omit `multiple` so this path is one photo per capture.
         -->
-        <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
-
-        <label class="input-btn" for="videoInput">Record video</label>
-        <!--
-          Video input:
-          - accept limits the picker to supported video files.
-          - capture="environment" hints rear camera on supported phones.
-          - We intentionally omit `multiple` so this path is one video per capture.
-        -->
-        <input id="videoInput" type="file" accept="video/mp4,video/quicktime,video/webm" capture="environment" hidden />
+        <input id="cameraInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" hidden />
 
         <label class="input-btn" for="galleryInput">Choose from gallery</label>
         <!--
           Gallery input:
-          - accept filters to photos/images and supported videos.
-          - multiple allows selecting many files in one picker action.
+          - accept filters to supported photo formats.
+          - multiple allows selecting many photos in one picker action.
         -->
-        <input id="galleryInput" type="file" accept="image/*,video/mp4,video/quicktime,video/webm" multiple hidden />
+        <input id="galleryInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden />
 
-        <button id="uploadBtn" class="btn" type="button" disabled>Upload selected files</button>
+        <button id="uploadBtn" class="btn" type="button" disabled>Upload selected photos</button>
       </div>
 
       <p id="status" class="pwa-status" aria-live="polite"></p>
@@ -56,7 +47,7 @@
 
     <section class="card tray-card">
       <div class="tray-head">
-        <h2>Selected tray</h2>
+        <h2>Selected photos</h2>
         <span id="selectedCount" class="count">Selected: 0 / 20</span>
       </div>
       <div id="selectedGrid" class="grid"></div>

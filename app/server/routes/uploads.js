@@ -3,9 +3,9 @@ import { Router } from 'express';
 import { MAX_FILES } from '../config.js';
 import {
   finalizeUploadedBatch,
+  isAllowedImageMimeType,
   upload,
   uploadErrorHandler,
-  validateUploadedFiles,
 } from '../storage.js';
 
 const uploadStatus = {
@@ -34,7 +34,7 @@ const markUploadStarted = (_req, res, next) => {
 
 const createUploadCompletedEvent = (req) => {
   const firstImage = (req.files || []).find((file) => (
-    typeof file?.mimetype === 'string' && file.mimetype.startsWith('image/')
+    isAllowedImageMimeType(file?.mimetype)
   ));
   if (!firstImage || typeof req.uploadBatchId !== 'string' || !req.uploadBatchId
     || typeof firstImage.filename !== 'string' || !firstImage.filename
@@ -55,7 +55,7 @@ const createUploadCompletedEvent = (req) => {
 const createUploadsRouter = ({ onUploadCompleted = () => {} } = {}) => {
   const router = Router();
 
-  router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), validateUploadedFiles, uploadErrorHandler, async (req, res, next) => {
+  router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), uploadErrorHandler, async (req, res, next) => {
     try {
       const files = await finalizeUploadedBatch(req);
       console.info('[auto-copy] upload completed', {

@@ -25,8 +25,8 @@ export {
 export { getStorageSettings, updateStorageSettings } from './retention.js';
 export {
   finalizeUploadedBatch,
+  isAllowedImageMimeType,
   upload,
   uploadErrorHandler,
-  validateUploadedFiles,
 } from './uploads.js';
 export { ensureStorageDirectories };

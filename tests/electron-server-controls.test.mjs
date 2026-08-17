@@ -301,7 +301,7 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
   )?.[0];
   assert.ok(selectBatchSource);
   assert.match(uploadsRouteSource, /const files = await finalizeUploadedBatch\(req\);[\s\S]*?createUploadCompletedEvent\(req\)/);
-  assert.match(uploadsRouteSource, /\.find\(\(file\) => \([\s\S]*?file\.mimetype\.startsWith\('image\/'\)/);
+  assert.match(uploadsRouteSource, /\.find\(\(file\) => \([\s\S]*?isAllowedImageMimeType\(file\?\.mimetype\)/);
   assert.match(uploadsRouteSource, /await onUploadCompleted\(completionEvent\)/);
   assert.match(parentBridgeSource, /processTarget\?\.connected[\s\S]*?typeof processTarget\.send !== 'function'/);
   assert.match(mainSource, /isOwnedServerProcess: \(serverProcess\) => serverManager\?\.isOwnedProcess\(serverProcess\)/);

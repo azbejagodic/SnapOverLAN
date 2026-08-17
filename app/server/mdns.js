@@ -5,14 +5,120 @@ import { getLanIpv4Addresses, getPreferredLanIpv4Address } from './lan.js';
 
 const MDNS_SHUTDOWN_TIMEOUT_MS = 500;
 const MDNS_STARTUP_TIMEOUT_MS = 3000;
+const MDNS_MULTICAST_ADDRESS = '224.0.0.251';
+const MDNS_PORT = 5353;
+const QU_MASK = 0x8000;
+const DNS_CLASS_NAMES = new Map([
+  [1, 'IN'],
+  [2, 'CS'],
+  [3, 'CH'],
+  [4, 'HS'],
+  [255, 'ANY'],
+]);
 
-const restrictServiceRecords = (service, ipv4Address) => {
+const removeBonjourHostAddressRecords = (service) => {
   if (typeof service?.records !== 'function') return;
   const getDefaultRecords = service.records.bind(service);
   service.records = () => getDefaultRecords().filter((record) => (
-    record.type !== 'AAAA'
-    && (record.type !== 'A' || record.data === ipv4Address)
+    record.type !== 'A' && record.type !== 'AAAA'
   ));
+};
+
+const getQuestionClassDetails = (question) => {
+  const rawClass = question?.class ?? 'IN';
+  let rawClassCode = null;
+  if (Number.isInteger(rawClass)) {
+    rawClassCode = rawClass;
+  } else {
+    const normalizedRawClass = String(rawClass).toUpperCase();
+    const knownClass = [...DNS_CLASS_NAMES.entries()].find(([, name]) => name === normalizedRawClass);
+    if (knownClass) rawClassCode = knownClass[0];
+    else if (/^UNKNOWN_\d+$/.test(normalizedRawClass)) {
+      rawClassCode = Number(normalizedRawClass.slice('UNKNOWN_'.length));
+    }
+  }
+
+  const qu = Boolean(
+    question?.qu
+    || question?.unicastResponse
+    || (Number.isInteger(rawClassCode) && (rawClassCode & QU_MASK) !== 0),
+  );
+  const decodedClassCode = Number.isInteger(rawClassCode)
+    ? rawClassCode & ~QU_MASK
+    : null;
+  return {
+    decodedClass: DNS_CLASS_NAMES.get(decodedClassCode) || String(rawClass),
+    decodedClassCode,
+    qu,
+    rawClass,
+    rawClassCode,
+  };
+};
+
+const createHostnameResponder = ({
+  hostname,
+  ipv4Address,
+  logger,
+  mdnsSocket,
+}) => {
+  const answer = {
+    name: hostname,
+    type: 'A',
+    class: 'IN',
+    flush: true,
+    ttl: 120,
+    data: ipv4Address,
+  };
+
+  const sendAnswer = ({ mode, remote }) => {
+    const unicast = mode === 'unicast';
+    const destination = unicast
+      ? { address: remote.address, port: remote.port }
+      : { address: MDNS_MULTICAST_ADDRESS, port: MDNS_PORT };
+    const onSent = (error) => {
+      const message = `SnapOverLAN mDNS A answer: hostname=${hostname} ipv4=${ipv4Address} `
+        + `destination=${destination.address}:${destination.port} mode=${mode} `
+        + `result=${error ? 'error' : 'success'}`;
+      if (error) logger.warn(`${message} error=${error.message || error}`);
+      else logger.log(message);
+    };
+
+    try {
+      if (unicast) mdnsSocket.respond({ answers: [answer] }, destination, onSent);
+      else mdnsSocket.respond({ answers: [answer] }, onSent);
+    } catch (error) {
+      onSent(error);
+    }
+  };
+
+  const handleQuery = (packet, remote = {}) => {
+    let shouldSendMulticast = false;
+    let shouldSendUnicast = false;
+    for (const question of packet.questions || []) {
+      if (String(question.name).toLowerCase() !== hostname) continue;
+      const classDetails = getQuestionClassDetails(question);
+      logger.log(
+        `SnapOverLAN mDNS query: hostname=${hostname} source=${remote.address || 'unknown'}:`
+        + `${remote.port || 'unknown'} qtype=${question.type} rawQclass=${classDetails.rawClass} `
+        + `qclassCode=${classDetails.rawClassCode ?? 'unknown'} `
+        + `decodedQclass=${classDetails.decodedClass} QU=${classDetails.qu}`,
+      );
+
+      const supportedClass = classDetails.decodedClass === 'IN'
+        || classDetails.decodedClass === 'ANY';
+      if (!supportedClass || (question.type !== 'A' && question.type !== 'ANY')) continue;
+      if (classDetails.qu) shouldSendUnicast = true;
+      else shouldSendMulticast = true;
+    }
+
+    if (shouldSendUnicast && remote.address && remote.port) {
+      sendAnswer({ mode: 'unicast', remote });
+    }
+    if (shouldSendMulticast) sendAnswer({ mode: 'multicast', remote });
+  };
+
+  mdnsSocket.on('query', handleQuery);
+  return () => mdnsSocket.removeListener('query', handleQuery);
 };
 
 const waitForServiceUp = (service, timeoutMs) => new Promise((resolve, reject) => {
@@ -87,18 +193,16 @@ const createMdnsAdvertiser = ({
       interface: ipv4Address,
     }, (error) => logger.warn('SnapOverLAN mDNS error:', error));
     const mdnsSocket = bonjour.server?.mdns;
-    const handleQuery = (packet, remote) => {
-      const matchingQuestions = (packet.questions || []).filter(
-        (question) => String(question.name).toLowerCase() === hostname,
-      );
-      if (matchingQuestions.length === 0) return;
-      logger.log(
-        `SnapOverLAN mDNS query: hostname=${hostname} source=${remote.address}:${remote.port} `
-        + `types=${matchingQuestions.map((question) => question.type).join(',')}`,
-      );
-    };
-    mdnsSocket?.on?.('query', handleQuery);
-    detachQueryLogger = () => mdnsSocket?.removeListener?.('query', handleQuery);
+    if (!mdnsSocket?.on || !mdnsSocket?.respond) {
+      await stop();
+      throw new Error('Bonjour did not expose its multicast-dns socket.');
+    }
+    detachQueryLogger = createHostnameResponder({
+      hostname,
+      ipv4Address,
+      logger,
+      mdnsSocket,
+    });
 
     const service = bonjour.publish({
       disableIPv6: true,
@@ -113,8 +217,9 @@ const createMdnsAdvertiser = ({
         protocolVersion: '1',
       },
     });
-    // bonjour-service otherwise creates host records for every OS interface.
-    restrictServiceRecords(service, ipv4Address);
+    // The explicit responder owns hostname A answers. Bonjour remains responsible
+    // for PTR/SRV/TXT service discovery and must not register competing A/AAAA data.
+    removeBonjourHostAddressRecords(service);
     service.on?.('error', (error) => logger.warn('SnapOverLAN mDNS publish error:', error));
 
     try {
@@ -146,4 +251,9 @@ const createMdnsAdvertiser = ({
   return { start, stop };
 };
 
-export { createMdnsAdvertiser, restrictServiceRecords };
+export {
+  createHostnameResponder,
+  createMdnsAdvertiser,
+  getQuestionClassDetails,
+  removeBonjourHostAddressRecords,
+};

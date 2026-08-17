@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import dnsPacket from 'dns-packet';
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -25,6 +26,104 @@ const rendererSource = await fs.readFile(
   new URL('../app/renderer/app.js', import.meta.url),
   'utf8',
 );
+
+const createDecodedHostnameQuery = ({ hostname, qtype = 'A', qu = false }) => {
+  const questions = [
+    { name: hostname, type: 'UNKNOWN_65', class: 'IN' },
+    { name: hostname, type: 'AAAA', class: 'IN' },
+    { name: hostname, type: qtype, class: 'IN' },
+  ];
+  const encoded = dnsPacket.encode({ type: 'query', questions });
+  let offset = 12;
+  for (const question of questions) {
+    offset += dnsPacket.name.encodingLength(question.name) + 2;
+    if (qu && question.type === qtype) {
+      encoded.writeUInt16BE(encoded.readUInt16BE(offset) | 0x8000, offset);
+    }
+    offset += 2;
+  }
+  return dnsPacket.decode(encoded);
+};
+
+const createAdvertiserFixture = async () => {
+  const events = [];
+  const logs = [];
+  const publications = [];
+  const responses = [];
+  const warnings = [];
+  let constructorOptions = null;
+  let responseError = null;
+  let service = null;
+  let mdnsSocket = null;
+
+  class FakeBonjour {
+    constructor(options) {
+      constructorOptions = options;
+      mdnsSocket = new EventEmitter();
+      mdnsSocket.respond = (packet, destinationOrCallback, responseCallback) => {
+        const multicast = typeof destinationOrCallback === 'function';
+        const callback = multicast ? destinationOrCallback : responseCallback;
+        responses.push({
+          destination: multicast ? null : destinationOrCallback,
+          packet,
+        });
+        callback?.(responseError);
+      };
+      this.server = { mdns: mdnsSocket };
+    }
+
+    publish(options) {
+      publications.push(options);
+      service = new EventEmitter();
+      service.records = () => [
+        { name: options.host, type: 'A', data: '192.168.1.25' },
+        { name: options.host, type: 'A', data: '26.10.20.30' },
+        { name: options.host, type: 'AAAA', data: 'fe80::1' },
+        { name: `${options.name}._http._tcp.local`, type: 'SRV', data: { target: options.host } },
+      ];
+      setImmediate(() => service.emit('up'));
+      return service;
+    }
+
+    unpublishAll(callback) {
+      events.push('unpublish');
+      callback();
+    }
+
+    destroy(callback) {
+      events.push('destroy');
+      callback();
+    }
+  }
+
+  const advertiser = createMdnsAdvertiser({
+    BonjourClass: FakeBonjour,
+    deviceId: 'a1b2c3d4',
+    getLanAddresses: () => [
+      { address: '192.168.1.25', private: true },
+      { address: '26.10.20.30', private: false },
+    ],
+    logger: {
+      log: (message) => logs.push(message),
+      warn: (message) => warnings.push(message),
+    },
+    port: 8787,
+  });
+  const status = await advertiser.start();
+  return {
+    advertiser,
+    constructorOptions,
+    events,
+    logs,
+    mdnsSocket,
+    publications,
+    responses,
+    service,
+    setResponseError: (error) => { responseError = error; },
+    status,
+    warnings,
+  };
+};
 
 after(async () => {
   await stopServer();
@@ -81,59 +180,11 @@ test('stable hostname and URL are valid and fit the built-in QR capacity', () =>
   assert.throws(() => formatDeviceHostname('invalid id'), /invalid/i);
 });
 
-test('mDNS publishes only the chosen LAN IPv4 on its explicit multicast interface', async () => {
-  const events = [];
-  const logs = [];
-  const publications = [];
-  let constructorOptions = null;
-  let service = null;
-  let mdnsSocket = null;
+test('mDNS service leaves hostname A/AAAA ownership to the explicit responder', async () => {
+  const fixture = await createAdvertiserFixture();
 
-  class FakeBonjour {
-    constructor(options) {
-      constructorOptions = options;
-      mdnsSocket = new EventEmitter();
-      this.server = { mdns: mdnsSocket };
-    }
-
-    publish(options) {
-      publications.push(options);
-      service = new EventEmitter();
-      service.records = () => [
-        { name: options.host, type: 'A', data: '192.168.1.25' },
-        { name: options.host, type: 'A', data: '26.10.20.30' },
-        { name: options.host, type: 'AAAA', data: 'fe80::1' },
-        { name: `${options.name}._http._tcp.local`, type: 'SRV', data: { target: options.host } },
-      ];
-      setImmediate(() => service.emit('up'));
-      return service;
-    }
-
-    unpublishAll(callback) {
-      events.push('unpublish');
-      callback();
-    }
-
-    destroy(callback) {
-      events.push('destroy');
-      callback();
-    }
-  }
-
-  const advertiser = createMdnsAdvertiser({
-    BonjourClass: FakeBonjour,
-    deviceId: 'a1b2c3d4',
-    getLanAddresses: () => [
-      { address: '192.168.1.25', private: true },
-      { address: '26.10.20.30', private: false },
-    ],
-    logger: { log: (message) => logs.push(message), warn: (message) => logs.push(message) },
-    port: 8787,
-  });
-  const status = await advertiser.start();
-
-  assert.deepEqual(constructorOptions, { bind: '0.0.0.0', interface: '192.168.1.25' });
-  assert.deepEqual(publications[0], {
+  assert.deepEqual(fixture.constructorOptions, { bind: '0.0.0.0', interface: '192.168.1.25' });
+  assert.deepEqual(fixture.publications[0], {
     disableIPv6: true,
     host: 'snap-a1b2c3d4.local',
     name: 'SnapOverLAN a1b2c3d4',
@@ -147,10 +198,10 @@ test('mDNS publishes only the chosen LAN IPv4 on its explicit multicast interfac
     },
   });
   assert.deepEqual(
-    service.records().filter(({ type }) => type === 'A' || type === 'AAAA'),
-    [{ name: 'snap-a1b2c3d4.local', type: 'A', data: '192.168.1.25' }],
+    fixture.service.records().filter(({ type }) => type === 'A' || type === 'AAAA'),
+    [],
   );
-  assert.deepEqual(status, {
+  assert.deepEqual(fixture.status, {
     deviceId: 'a1b2c3d4',
     hostname: 'snap-a1b2c3d4.local',
     ipv4Addresses: ['192.168.1.25'],
@@ -158,14 +209,92 @@ test('mDNS publishes only the chosen LAN IPv4 on its explicit multicast interfac
     stableUrl: 'http://snap-a1b2c3d4.local:8787',
     started: true,
   });
-  mdnsSocket.emit('query', {
-    questions: [{ name: 'snap-a1b2c3d4.local', type: 'A' }],
-  }, { address: '192.168.1.50', port: 5353 });
-  assert.match(logs.join('\n'), /source=192\.168\.1\.50:5353 types=A/);
 
-  await advertiser.stop();
-  assert.deepEqual(events, ['unpublish', 'destroy']);
-  assert.equal(mdnsSocket.listenerCount('query'), 0);
+  await fixture.advertiser.stop();
+  assert.deepEqual(fixture.events, ['unpublish', 'destroy']);
+});
+
+test('normal A and ANY questions produce one multicast flush A answer', async () => {
+  const fixture = await createAdvertiserFixture();
+  const hostname = fixture.status.hostname;
+  const remote = { address: '192.168.1.50', port: 5353 };
+  const query = createDecodedHostnameQuery({ hostname });
+
+  assert.deepEqual(query.questions.map(({ type }) => type), ['UNKNOWN_65', 'AAAA', 'A']);
+  fixture.mdnsSocket.emit('query', query, remote);
+
+  assert.equal(fixture.responses.length, 1);
+  assert.equal(fixture.responses[0].destination, null);
+  assert.deepEqual(fixture.responses[0].packet.answers, [{
+    name: hostname,
+    type: 'A',
+    class: 'IN',
+    flush: true,
+    ttl: 120,
+    data: '192.168.1.25',
+  }]);
+  assert.match(fixture.logs.join('\n'), /qtype=UNKNOWN_65[^\n]*QU=false/);
+  assert.match(fixture.logs.join('\n'), /qtype=AAAA[^\n]*QU=false/);
+  assert.match(fixture.logs.join('\n'), /qtype=A rawQclass=IN qclassCode=1 decodedQclass=IN QU=false/);
+  assert.match(
+    fixture.logs.join('\n'),
+    /destination=224\.0\.0\.251:5353 mode=multicast result=success/,
+  );
+
+  const anyQuery = createDecodedHostnameQuery({ hostname, qtype: 'ANY' });
+  fixture.mdnsSocket.emit('query', anyQuery, remote);
+  assert.equal(fixture.responses.length, 2);
+  assert.deepEqual(fixture.responses[1].packet.answers, fixture.responses[0].packet.answers);
+
+  fixture.mdnsSocket.emit('query', {
+    questions: [{ name: `other-${hostname}`, type: 'A', class: 'IN' }],
+  }, remote);
+  assert.equal(fixture.responses.length, 2);
+
+  await fixture.advertiser.stop();
+  assert.equal(fixture.mdnsSocket.listenerCount('query'), 0);
+});
+
+test('QU A question produces one unicast answer to the requesting address and port', async () => {
+  const fixture = await createAdvertiserFixture();
+  const hostname = fixture.status.hostname;
+  const remote = { address: '192.168.1.51', port: 5353 };
+  const query = createDecodedHostnameQuery({ hostname, qu: true });
+  const aQuestion = query.questions.find(({ type }) => type === 'A');
+
+  // dns-packet 5.6.1 preserves the QU bit only in this UNKNOWN_<class> string.
+  assert.equal(aQuestion.class, 'UNKNOWN_32769');
+  assert.equal(aQuestion.qu, undefined);
+  fixture.mdnsSocket.emit('query', query, remote);
+
+  assert.equal(fixture.responses.length, 1);
+  assert.deepEqual(fixture.responses[0].destination, remote);
+  assert.deepEqual(fixture.responses[0].packet.answers, [{
+    name: hostname,
+    type: 'A',
+    class: 'IN',
+    flush: true,
+    ttl: 120,
+    data: '192.168.1.25',
+  }]);
+  assert.match(
+    fixture.logs.join('\n'),
+    /qtype=A rawQclass=UNKNOWN_32769 qclassCode=32769 decodedQclass=IN QU=true/,
+  );
+  assert.match(
+    fixture.logs.join('\n'),
+    /destination=192\.168\.1\.51:5353 mode=unicast result=success/,
+  );
+
+  fixture.setResponseError(new Error('simulated send failure'));
+  fixture.mdnsSocket.emit('query', query, remote);
+  assert.match(
+    fixture.warnings.join('\n'),
+    /mode=unicast result=error error=simulated send failure/,
+  );
+
+  await fixture.advertiser.stop();
+  assert.equal(fixture.mdnsSocket.listenerCount('query'), 0);
 });
 
 test('IP discovery remains available and selects the private LAN address for mDNS', () => {

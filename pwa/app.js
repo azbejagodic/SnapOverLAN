@@ -1,4 +1,4 @@
-const MAX_FILES = 20;
+const MAX_FILES = 10;
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',

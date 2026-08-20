@@ -121,7 +121,20 @@ test('phone interface exposes only approved photo inputs and rejects video selec
   elements.galleryInput.files = [{ name: 'photo.heic', type: 'image/heic', size: 10 }];
   await elements.galleryInput.dispatch('change');
   assert.equal(elements.uploadBtn.disabled, false);
-  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 20');
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+});
+
+test('phone selection tray keeps only the first 10 photos', async () => {
+  const elements = createHarness();
+  elements.galleryInput.files = Array.from({ length: 11 }, (_, index) => ({
+    name: `photo-${index + 1}.jpg`,
+    type: 'image/jpeg',
+    size: 10,
+  }));
+
+  await elements.galleryInput.dispatch('change');
+  assert.equal(elements.selectedCount.textContent, 'Selected: 10 / 10');
+  assert.match(elements.status.textContent, /Tray limit is 10, extra photos were skipped/);
 });
 
 test('application mounts without making a startup server request', () => {
@@ -148,7 +161,7 @@ test('an upload network failure is caught and keeps the selected file available'
   await elements.uploadBtn.dispatch('click');
   assert.equal(elements.status.textContent, 'Upload failed. Your selected files are still available.');
   assert.equal(elements.status.className, 'error');
-  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 20');
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
   assert.equal(elements.uploadBtn.disabled, false);
 });
 

@@ -110,6 +110,13 @@ test('LAN uploads accept only the approved image MIME allowlist', async () => {
     assert.equal(rejected.response.status, 400, file.type);
     assert.match(rejected.body.error, /Only JPEG, PNG, WebP, HEIC, and HEIF images are allowed/);
   }
+
+  const tooMany = await uploadFiles(Array.from({ length: 11 }, (_, index) => ({
+    name: `photo-${index + 1}.jpg`,
+    type: 'image/jpeg',
+  })), { lan: true });
+  assert.equal(tooMany.response.status, 400);
+  assert.match(tooMany.body.error, /Maximum 10 files are allowed/);
 });
 
 test('LAN clients receive 404 for batch, file, settings, diagnostics, and control APIs', async () => {

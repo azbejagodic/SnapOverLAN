@@ -13,7 +13,7 @@ const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configure
   ? configuredPort
   : 8787;
 const HOST = '0.0.0.0';
-const MAX_FILES = 20;
+const MAX_FILES = 10;
 const MAX_FILE_SIZE = 12 * 1024 * 1024;
 
 const DATA_ROOT = snapEnv('DATA_DIR') || path.join(PROJECT_ROOT, 'data');

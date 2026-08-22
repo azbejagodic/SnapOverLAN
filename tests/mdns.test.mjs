@@ -45,7 +45,7 @@ const createDecodedHostnameQuery = ({ hostname, qtype = 'A', qu = false }) => {
   return dnsPacket.decode(encoded);
 };
 
-const createAdvertiserFixture = async () => {
+const createAdvertiserFixture = async ({ debug = false, useEnvironment = false } = {}) => {
   const events = [];
   const logs = [];
   const publications = [];
@@ -53,12 +53,14 @@ const createAdvertiserFixture = async () => {
   const warnings = [];
   let constructorOptions = null;
   let responseError = null;
+  let socketWarning = null;
   let service = null;
   let mdnsSocket = null;
 
   class FakeBonjour {
-    constructor(options) {
+    constructor(options, onWarning) {
       constructorOptions = options;
+      socketWarning = onWarning;
       mdnsSocket = new EventEmitter();
       mdnsSocket.respond = (packet, destinationOrCallback, responseCallback) => {
         const multicast = typeof destinationOrCallback === 'function';
@@ -96,7 +98,7 @@ const createAdvertiserFixture = async () => {
     }
   }
 
-  const advertiser = createMdnsAdvertiser({
+  const advertiserOptions = {
     BonjourClass: FakeBonjour,
     deviceId: 'a1b2c3d4',
     getLanAddresses: () => [
@@ -108,12 +110,15 @@ const createAdvertiserFixture = async () => {
       warn: (message) => warnings.push(message),
     },
     port: 8787,
-  });
+  };
+  if (!useEnvironment) advertiserOptions.debug = debug;
+  const advertiser = createMdnsAdvertiser(advertiserOptions);
   const status = await advertiser.start();
   return {
     advertiser,
     constructorOptions,
     events,
+    emitSocketWarning: (error) => socketWarning(error),
     logs,
     mdnsSocket,
     publications,
@@ -209,6 +214,9 @@ test('mDNS service leaves hostname A/AAAA ownership to the explicit responder', 
     stableUrl: 'http://snap-a1b2c3d4.local:8787',
     started: true,
   });
+  assert.deepEqual(fixture.logs, [
+    'SnapOverLAN mDNS ready: snap-a1b2c3d4.local -> 192.168.1.25',
+  ]);
 
   await fixture.advertiser.stop();
   assert.deepEqual(fixture.events, ['unpublish', 'destroy']);
@@ -236,17 +244,8 @@ test('normal A and ANY questions produce multicast and compatibility-unicast A a
   assert.deepEqual(fixture.responses[1].destination, remote);
   assert.deepEqual(fixture.responses[0].packet.answers, expectedAnswers);
   assert.deepEqual(fixture.responses[1].packet.answers, expectedAnswers);
-  assert.match(fixture.logs.join('\n'), /qtype=UNKNOWN_65[^\n]*QU=false/);
-  assert.match(fixture.logs.join('\n'), /qtype=AAAA[^\n]*QU=false/);
-  assert.match(fixture.logs.join('\n'), /qtype=A rawQclass=IN qclassCode=1 decodedQclass=IN QU=false/);
-  assert.match(
-    fixture.logs.join('\n'),
-    /destination=224\.0\.0\.251:5353 mode=multicast result=success/,
-  );
-  assert.match(
-    fixture.logs.join('\n'),
-    /destination=192\.168\.1\.50:5353 mode=compat-unicast result=success/,
-  );
+  assert.doesNotMatch(fixture.logs.join('\n'), /mDNS query:/);
+  assert.doesNotMatch(fixture.logs.join('\n'), /mDNS A answer:/);
 
   const anyQuery = createDecodedHostnameQuery({ hostname, qtype: 'ANY' });
   fixture.mdnsSocket.emit('query', anyQuery, remote);
@@ -307,15 +306,7 @@ test('QU A question produces one unicast answer to the requesting address and po
     ttl: 120,
     data: '192.168.1.25',
   }]);
-  assert.match(
-    fixture.logs.join('\n'),
-    /qtype=A rawQclass=UNKNOWN_32769 qclassCode=32769 decodedQclass=IN QU=true/,
-  );
-  assert.match(
-    fixture.logs.join('\n'),
-    /destination=192\.168\.1\.51:5353 mode=unicast result=success/,
-  );
-  assert.doesNotMatch(fixture.logs.join('\n'), /mode=compat-unicast/);
+  assert.doesNotMatch(fixture.logs.join('\n'), /mDNS query:|mDNS A answer:/);
 
   fixture.setResponseError(new Error('simulated send failure'));
   fixture.mdnsSocket.emit('query', query, remote);
@@ -326,6 +317,74 @@ test('QU A question produces one unicast answer to the requesting address and po
 
   await fixture.advertiser.stop();
   assert.equal(fixture.mdnsSocket.listenerCount('query'), 0);
+});
+
+test('SNAPOVERLAN_DEBUG_MDNS=1 enables detailed logs without changing responses', async () => {
+  const previousDebugValue = process.env.SNAPOVERLAN_DEBUG_MDNS;
+  process.env.SNAPOVERLAN_DEBUG_MDNS = '1';
+
+  try {
+    const fixture = await createAdvertiserFixture({ useEnvironment: true });
+    const hostname = fixture.status.hostname;
+    const remote = { address: '192.168.1.52', port: 5353 };
+    fixture.mdnsSocket.emit('query', createDecodedHostnameQuery({ hostname }), remote);
+
+    assert.equal(fixture.responses.length, 2);
+    assert.equal(fixture.responses[0].destination, null);
+    assert.deepEqual(fixture.responses[1].destination, remote);
+    assert.match(fixture.logs.join('\n'), /qtype=UNKNOWN_65[^\n]*QU=false/);
+    assert.match(fixture.logs.join('\n'), /qtype=AAAA[^\n]*QU=false/);
+    assert.match(
+      fixture.logs.join('\n'),
+      /qtype=A rawQclass=IN qclassCode=1 decodedQclass=IN QU=false/,
+    );
+    assert.match(
+      fixture.logs.join('\n'),
+      /destination=224\.0\.0\.251:5353 mode=multicast result=success/,
+    );
+    assert.match(
+      fixture.logs.join('\n'),
+      /destination=192\.168\.1\.52:5353 mode=compat-unicast result=success/,
+    );
+
+    await fixture.advertiser.stop();
+  } finally {
+    if (previousDebugValue === undefined) delete process.env.SNAPOVERLAN_DEBUG_MDNS;
+    else process.env.SNAPOVERLAN_DEBUG_MDNS = previousDebugValue;
+  }
+});
+
+test('mDNS debug logs stay disabled when the environment flag is absent or not 1', async () => {
+  const previousDebugValue = process.env.SNAPOVERLAN_DEBUG_MDNS;
+
+  try {
+    for (const debugValue of [undefined, 'true']) {
+      if (debugValue === undefined) delete process.env.SNAPOVERLAN_DEBUG_MDNS;
+      else process.env.SNAPOVERLAN_DEBUG_MDNS = debugValue;
+
+      const fixture = await createAdvertiserFixture({ useEnvironment: true });
+      fixture.mdnsSocket.emit('query', createDecodedHostnameQuery({
+        hostname: fixture.status.hostname,
+      }), { address: '192.168.1.53', port: 5353 });
+
+      assert.doesNotMatch(fixture.logs.join('\n'), /mDNS query:|mDNS A answer:/);
+      await fixture.advertiser.stop();
+    }
+  } finally {
+    if (previousDebugValue === undefined) delete process.env.SNAPOVERLAN_DEBUG_MDNS;
+    else process.env.SNAPOVERLAN_DEBUG_MDNS = previousDebugValue;
+  }
+});
+
+test('mDNS socket and publish warnings remain enabled in normal mode', async () => {
+  const fixture = await createAdvertiserFixture();
+
+  fixture.emitSocketWarning(new Error('simulated socket warning'));
+  fixture.service.emit('error', new Error('simulated publish failure'));
+
+  assert.match(fixture.warnings.join('\n'), /SnapOverLAN mDNS error:/);
+  assert.match(fixture.warnings.join('\n'), /SnapOverLAN mDNS publish error:/);
+  await fixture.advertiser.stop();
 });
 
 test('IP discovery remains available and selects the private LAN address for mDNS', () => {

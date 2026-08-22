@@ -24,6 +24,10 @@ const removeBonjourHostAddressRecords = (service) => {
   ));
 };
 
+const createMdnsDebugLogger = ({ enabled, logger }) => (
+  enabled ? (message) => logger.log(message) : () => {}
+);
+
 const getQuestionClassDetails = (question) => {
   const rawClass = question?.class ?? 'IN';
   let rawClassCode = null;
@@ -56,6 +60,7 @@ const getQuestionClassDetails = (question) => {
 };
 
 const createHostnameResponder = ({
+  debugLog = () => {},
   hostname,
   ipv4Address,
   logger,
@@ -80,7 +85,7 @@ const createHostnameResponder = ({
         + `destination=${destination.address}:${destination.port} mode=${mode} `
         + `result=${error ? 'error' : 'success'}`;
       if (error) logger.warn(`${message} error=${error.message || error}`);
-      else logger.log(message);
+      else debugLog(message);
     };
 
     try {
@@ -102,7 +107,7 @@ const createHostnameResponder = ({
     for (const question of packet.questions || []) {
       if (String(question.name).toLowerCase() !== hostname) continue;
       const classDetails = getQuestionClassDetails(question);
-      logger.log(
+      debugLog(
         `SnapOverLAN mDNS query: hostname=${hostname} source=${remote.address || 'unknown'}:`
         + `${remote.port || 'unknown'} qtype=${question.type} rawQclass=${classDetails.rawClass} `
         + `qclassCode=${classDetails.rawClassCode ?? 'unknown'} `
@@ -173,12 +178,14 @@ const waitForCallback = (invoke) => new Promise((resolve) => {
 
 const createMdnsAdvertiser = ({
   BonjourClass = Bonjour,
+  debug = process.env.SNAPOVERLAN_DEBUG_MDNS === '1',
   deviceId,
   getLanAddresses = getLanIpv4Addresses,
   logger = console,
   port = PORT,
   startupTimeoutMs = MDNS_STARTUP_TIMEOUT_MS,
 } = {}) => {
+  const debugLog = createMdnsDebugLogger({ enabled: debug, logger });
   let bonjour = null;
   let detachQueryLogger = () => {};
   let status = null;
@@ -210,6 +217,7 @@ const createMdnsAdvertiser = ({
       throw new Error('Bonjour did not expose its multicast-dns socket.');
     }
     detachQueryLogger = createHostnameResponder({
+      debugLog,
       hostname,
       ipv4Address,
       logger,
@@ -253,10 +261,7 @@ const createMdnsAdvertiser = ({
       stableUrl: formatStableUrl(deviceId, port),
       started: true,
     };
-    logger.log(
-      `SnapOverLAN mDNS advertisement: started=true hostname=${hostname} `
-      + `ipv4=${ipv4Address} port=${port}`,
-    );
+    logger.log(`SnapOverLAN mDNS ready: ${hostname} -> ${ipv4Address}`);
     return status;
   };
 

@@ -39,6 +39,18 @@
         -->
         <input id="galleryInput" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" multiple hidden />
 
+        <label class="fast-upload" for="fastUploadToggle">
+          <span class="fast-upload-copy">
+            <span class="fast-upload-title">Fast upload</span>
+            <span id="fastUploadDescription" class="fast-upload-description">Resize large photos for faster transfer</span>
+          </span>
+          <span class="fast-upload-switch">
+            <input id="fastUploadToggle" class="fast-upload-input" type="checkbox" role="switch" aria-describedby="fastUploadDescription" checked />
+            <span class="fast-upload-track" aria-hidden="true"><span class="fast-upload-thumb"></span></span>
+            <span id="fastUploadState" class="fast-upload-state" aria-hidden="true">On</span>
+          </span>
+        </label>
+
         <button id="uploadBtn" class="btn" type="button" disabled>Upload selected photos</button>
       </div>
 

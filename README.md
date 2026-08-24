@@ -29,11 +29,28 @@ The Express server is an internal part of the desktop app. A standalone server c
 - Windows x64 PC
 - Phone and PC on the same trusted/private local network
 - Chrome or Brave if using the extension
-- Node.js 18.17 or newer when running or building from source
+- Node.js 22.12 or newer when running or building from source
 
-The current end-user build target is Windows. The repository does not currently publish installer binaries as GitHub Release assets, so run the app from source or build the Windows distributions locally.
+The current end-user build target is Windows. Tagged releases are configured to provide the Windows Setup executable, portable executable, and browser-extension ZIP through [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases). If the available release does not yet include those assets, use the source or local-build instructions below.
 
 ## Installation and getting started
+
+### Windows Setup
+
+From [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases), download `SnapOverLAN Setup <version>-x64.exe` from a release that includes binary assets and run it. The per-machine installer creates Start Menu and desktop shortcuts and configures the required Private-network Windows Firewall rules.
+
+### Portable app
+
+Download `SnapOverLAN-<version>-portable-x64.exe` from the same release and run it directly. The portable build does not perform installer-time firewall configuration, so Windows Firewall access may need to be allowed separately.
+
+### Browser extension
+
+Download and extract `SnapOverLAN-extension-<extension-version>.zip` from the same release. The extension is versioned independently from the desktop app, so its filename version may differ from the release tag. Then:
+
+1. Open `chrome://extensions` or `brave://extensions`.
+2. Enable **Developer Mode**.
+3. Select **Load unpacked**.
+4. Choose the extracted directory containing `manifest.json`.
 
 ### Run from source
 
@@ -42,7 +59,7 @@ Clone the repository and run:
 ```text
 git clone https://github.com/azbejagodic/SnapOverLAN.git
 cd SnapOverLAN
-npm install
+npm ci
 npm start
 ```
 
@@ -50,19 +67,20 @@ If the source was downloaded as an archive, open a terminal in the extracted dir
 
 The desktop app starts the local server and opens the SnapOverLAN window. Connect the phone and PC to the same network, select **QR**, and scan the code with the phone.
 
-### Build the Windows app
+### Build release artifacts locally
 
 ```text
-npm install
-npm run dist
+npm ci
+npm run release:build
 ```
 
 The generated files are written to `dist/`:
 
-- `SnapOverLAN Setup 1.0.0-x64.exe` — per-machine NSIS installer with Start Menu and desktop shortcuts, selectable installation directory, and installer-managed firewall rules
-- `SnapOverLAN-1.0.0-portable-x64.exe` — portable x64 executable without installer-time firewall configuration
+- `SnapOverLAN Setup <version>-x64.exe`
+- `SnapOverLAN-<version>-portable-x64.exe`
+- `SnapOverLAN-extension-<extension-version>.zip`
 
-The version in each filename comes from `package.json`.
+The desktop version comes from `package.json`; the independently maintained extension version comes from `extension/manifest.json`.
 
 ## Using SnapOverLAN
 
@@ -107,14 +125,7 @@ Optimization happens on the phone. SnapOverLAN keeps the original when the brows
 
 ### Browser extension
 
-The Manifest V3 extension is included as source in `extension/`.
-
-To load it from a repository checkout:
-
-1. Open `chrome://extensions` or `brave://extensions`.
-2. Enable **Developer Mode**.
-3. Select **Load unpacked**.
-4. Choose the repository's `extension/` directory.
+The Manifest V3 extension is included as source in `extension/`. From a repository checkout, that directory can be selected directly with **Load unpacked**; release users can select the extracted extension archive as described above.
 
 The extension connects to `http://localhost:8787`, refreshes the current batch, and shows its photos. **Copy** converts the chosen photo to PNG and writes the image to the clipboard. **Open** opens the stored photo in a browser tab.
 
@@ -170,7 +181,7 @@ The runtime data includes batch directories, the current-batch pointer, device i
 Install dependencies:
 
 ```text
-npm install
+npm ci
 ```
 
 Start the Electron desktop app:
@@ -198,6 +209,20 @@ npm run dist
 ```
 
 `npm run dist` regenerates icons before invoking Electron Builder with the Windows x64 targets.
+
+Package only the browser extension:
+
+```text
+npm run package:extension
+```
+
+Build all three release artifacts:
+
+```text
+npm run release:build
+```
+
+Pushing a tag that exactly matches `v<package.json version>` runs `.github/workflows/release.yml` on Windows, installs with `npm ci`, runs the automated tests, builds all release artifacts, and creates or updates the corresponding GitHub Release. CI builds are unsigned unless a maintainer later configures Windows code signing.
 
 ### Testing
 
@@ -229,8 +254,8 @@ LAN-accessible surface:
 Important localhost-only routes:
 
 - `GET /api/latest` and `GET /files/:name` — current batch metadata and files
-- `GET /api/latest/download` — current batch as a ZIP archive
-- `/api/batches` and `/api/batches/:id` — list, inspect, select, download, and delete batches
+- `GET /api/latest/download` — download the current batch as a ZIP archive
+- `/api/batches` and `/api/batches/:id` — list, inspect, select, and delete batches; individual batch files are available through `/api/batches/:id/files/:name`
 - `GET`/`PUT /api/storage-settings` — optional time-based retention
 - `GET /api/upload-status`, `/api/phone-url`, and `/api/server-status` — local state and diagnostics
 - `GET`/`PUT /api/auto-copy` — desktop Auto-copy integration

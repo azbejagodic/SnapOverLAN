@@ -125,15 +125,6 @@ function buildImageUrl(origin, file) {
   return `${origin}/files/${encodeURIComponent(file.name)}`;
 }
 
-function isVideoFile(file) {
-  const extension = file?.name?.split('.').pop()?.trim().toLowerCase();
-  return extension === 'mp4' || extension === 'mov' || extension === 'webm';
-}
-
-function getImageFiles(files) {
-  return files.filter((file) => !isVideoFile(file));
-}
-
 function getImageSignature(files) {
   return files
     .map((file) => `${file?.name || ''}|${file?.url || ''}|${file?.size ?? ''}`)
@@ -281,16 +272,15 @@ async function refresh({ showLoading = false, force = false } = {}) {
     await ensureHostPermission(origin);
 
     const files = await loadLatest(origin);
-    const imageFiles = getImageFiles(files);
     const imageOrigin = origin;
-    const nextSignature = getImageSignature(imageFiles);
+    const nextSignature = getImageSignature(files);
 
     if (!force && nextSignature === latestImageSignature) {
       setStatus('', 'muted');
       return;
     }
 
-    if (imageFiles.length === 0) {
+    if (files.length === 0) {
       console.log('[popup] rendering count computed', { apiFilesCount: files.length, renderedCount: 0 });
       latestImageSignature = nextSignature;
       gridEl.textContent = '';
@@ -299,7 +289,7 @@ async function refresh({ showLoading = false, force = false } = {}) {
     }
 
     const fragment = document.createDocumentFragment();
-    for (const file of imageFiles) {
+    for (const file of files) {
       try {
         fragment.appendChild(makeCard(imageOrigin, file));
       } catch (error) {

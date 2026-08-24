@@ -53,7 +53,7 @@ test('desktop batch download preserves every original filename, format, and byte
   await fs.mkdir(destinationDir);
   const files = [
     { name: 'holiday photo.webp', bytes: Buffer.from([0x52, 0x49, 0x46, 0x46]) },
-    { name: 'clip.MOV', bytes: Buffer.from([0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70]) },
+    { name: 'phone-original.heic', bytes: Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]) },
     { name: 'camera-original.jpg', bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]) },
   ];
 

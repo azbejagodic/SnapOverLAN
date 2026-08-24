@@ -2,6 +2,9 @@
   "name": "snap-over-lan",
   "version": "1.0.0",
   "description": "Local LAN photo transfer bridge between phone and PC",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "module",
   "main": "app/main.js",
   "scripts": {
@@ -10,6 +13,8 @@
     "desktop": "electron app/main.js",
     "app": "electron app/main.js",
     "dist": "npm run generate:icons && electron-builder --win",
+    "package:extension": "node scripts/package-extension.mjs",
+    "release:build": "npm run dist && npm run package:extension",
     "generate:icons": "node scripts/generate-icons.mjs",
     "test:pwa-connection": "node --test tests/pwa-connection.test.mjs",
     "test:electron-controls": "node --test tests/electron-server-controls.test.mjs tests/auto-copy.test.mjs",

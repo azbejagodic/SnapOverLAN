@@ -158,12 +158,14 @@ const createServerManager = ({
 
     const isPackaged = electronApp.isPackaged;
     const nodePath = isPackaged ? process.execPath : process.env.npm_node_execpath || process.env.NODE || 'node';
+    const serverWorkingDirectory = isPackaged ? process.resourcesPath : projectRoot;
     const runtimeDataRoot = isPackaged ? path.join(electronApp.getPath('userData'), 'data') : '';
     const logPath = getStartupLogPath();
     const childEnv = {
       ...process.env,
       SNAPOVERLAN_PARENT_PID: String(process.pid),
       SNAPOVERLAN_LOG_FILE: logPath,
+      SNAPOVERLAN_RUN_SERVER: '1',
       SNAPOVERLAN_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
       PHOTO_GPT_PARENT_PID: String(process.pid),
       PHOTO_GPT_LOG_FILE: logPath,
@@ -180,6 +182,7 @@ const createServerManager = ({
     await writeStartupLog('server-starting', {
       nodePath,
       serverPath,
+      serverWorkingDirectory,
       bindHost: '0.0.0.0',
       port,
       runtimeDataDir: runtimeDataRoot || path.join(projectRoot, 'data'),
@@ -187,7 +190,7 @@ const createServerManager = ({
     });
 
     const serverProcess = spawn(nodePath, [serverPath], {
-      cwd: projectRoot,
+      cwd: serverWorkingDirectory,
       env: childEnv,
       stdio: isPackaged
         ? ['ignore', 'ignore', 'ignore', 'ipc']

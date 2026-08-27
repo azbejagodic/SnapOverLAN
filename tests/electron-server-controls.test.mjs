@@ -252,6 +252,18 @@ test('server startup settles before the renderer loads and a failure still creat
   assert.doesNotMatch(mainSource, /serverAutoStart/);
 });
 
+test('packaged child startup explicitly runs the server entry from inside ASAR', () => {
+  assert.match(desktopServerManagerSource, /SNAPOVERLAN_RUN_SERVER:\s*'1'/);
+  assert.match(serverSource, /process\.env\.SNAPOVERLAN_RUN_SERVER === '1'/);
+  assert.match(desktopServerManagerSource, /ELECTRON_RUN_AS_NODE = '1'/);
+  assert.match(
+    desktopServerManagerSource,
+    /serverWorkingDirectory = isPackaged \? process\.resourcesPath : projectRoot/,
+  );
+  assert.match(desktopServerManagerSource, /cwd:\s*serverWorkingDirectory/);
+  assert.match(desktopServerManagerSource, /spawn\(nodePath, \[serverPath\]/);
+});
+
 test('manual server controls are removed and retry is error-only', () => {
   assert.doesNotMatch(rendererMarkup, /id="serverToggleBtn"/);
   assert.doesNotMatch(rendererSource, /serverToggleBtn|serverToggleOperation|\.startServer\(|\.stopServer\(/);

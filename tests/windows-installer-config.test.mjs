@@ -6,6 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+test('production builds package application files in ASAR without broad unpacking', async () => {
+  const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
+
+  assert.equal(packageJson.build.asar, true);
+  assert.equal(packageJson.build.asarUnpack, undefined);
+});
+
 test('Windows Setup remains an all-users assisted installer', async () => {
   const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
   const { nsis } = packageJson.build;

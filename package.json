@@ -34,7 +34,7 @@
   "build": {
     "appId": "local.snapoverlan.app",
     "productName": "SnapOverLAN",
-    "asar": false,
+    "asar": true,
     "directories": {
       "output": "dist",
       "buildResources": "assets/electron"

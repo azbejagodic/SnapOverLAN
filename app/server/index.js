@@ -238,8 +238,9 @@ const shutdownServer = (reason) => {
   return shutdownPromise;
 };
 
-const isDirectRun = process.argv[1]
-  && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+const isDirectRun = process.env.SNAPOVERLAN_RUN_SERVER === '1'
+  || (process.argv[1]
+    && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
 
 if (isDirectRun) {
   watchParentProcess();

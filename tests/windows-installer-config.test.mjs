@@ -28,6 +28,7 @@ test('custom NSIS hooks safely migrate private-profile installs and retain firew
   assert.match(source, /ReadRegStr \$R0 HKLM "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/);
   assert.match(source, /EnumRegKey \$R2 HKLM "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList"/);
   assert.match(source, /ReadRegStr \$R3 HKLM "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\\$R2" ProfileImagePath/);
+  assert.match(source, /ExpandEnvStrings \$R3 "\$R3"/);
   assert.match(source, /StrCpy \$R5 \$R8 \$R4/);
   assert.match(source, /StrCpy \$INSTDIR "\$R7\\\$\{APP_FILENAME\}"/);
   assert.doesNotMatch(source, /DeleteReg(?:Key|Value)/);

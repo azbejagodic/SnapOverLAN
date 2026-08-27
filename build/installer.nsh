@@ -22,6 +22,7 @@
 
       ReadRegStr $R3 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$R2" ProfileImagePath
       ${If} $R3 != ""
+        ExpandEnvStrings $R3 "$R3"
         GetFullPathName $R3 "$R3"
         StrCpy $R3 "$R3\"
         StrLen $R4 $R3

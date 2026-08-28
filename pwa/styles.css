@@ -252,6 +252,8 @@ h2 {
   background: var(--dark-button);
   color: #f5fdff;
   border-color: rgba(255, 255, 255, 0.12);
+  transition: background-color 80ms ease, transform 80ms ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .btn {
@@ -270,13 +272,25 @@ h2 {
   background: var(--button-hover);
 }
 
-.input-btn:hover {
+.input-btn:active,
+.input-btn.is-pressed {
   background: var(--dark-button-hover);
+  transform: scale(0.98);
 }
 
-.input-btn:active,
 .btn:not(:disabled):active {
   transform: translateY(1px);
+}
+
+.input-btn:focus-visible {
+  outline: 3px solid rgba(8, 124, 102, 0.3);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .input-btn:hover {
+    background: var(--dark-button-hover);
+  }
 }
 
 #status,

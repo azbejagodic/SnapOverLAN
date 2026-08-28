@@ -17,6 +17,7 @@ const uploadBtn = document.getElementById('uploadBtn');
 const statusEl = document.getElementById('status');
 const fastUploadToggle = document.getElementById('fastUploadToggle');
 const fastUploadState = document.getElementById('fastUploadState');
+const inputButtons = document.querySelectorAll?.('.input-btn') || [];
 
 const selectedGrid = document.getElementById('selectedGrid');
 const selectedCount = document.getElementById('selectedCount');
@@ -25,6 +26,22 @@ const selectedCount = document.getElementById('selectedCount');
 let selectedFiles = [];
 let hasEverSelectedFiles = false;
 let isUploading = false;
+
+function clearPressedInputButtons() {
+  inputButtons.forEach((button) => button.classList.remove('is-pressed'));
+}
+
+inputButtons.forEach((button) => {
+  button.addEventListener('pointerdown', (event) => {
+    if (event.button === 0) button.classList.add('is-pressed');
+  });
+  for (const eventName of ['pointerup', 'pointercancel', 'pointerleave']) {
+    button.addEventListener(eventName, () => button.classList.remove('is-pressed'));
+  }
+});
+
+window.addEventListener?.('blur', clearPressedInputButtons);
+window.addEventListener?.('focus', clearPressedInputButtons);
 
 function readFastUploadPreference() {
   try {
@@ -274,11 +291,13 @@ function appendFiles(fileList) {
 }
 
 cameraInput.addEventListener('change', () => {
+  clearPressedInputButtons();
   appendFiles(cameraInput.files);
   cameraInput.value = '';
 });
 
 galleryInput.addEventListener('change', () => {
+  clearPressedInputButtons();
   appendFiles(galleryInput.files);
   galleryInput.value = '';
 });

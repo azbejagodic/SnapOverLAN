@@ -23,12 +23,16 @@ jobs:
           cache: npm
 
       - name: Verify tag matches desktop version
+        id: versions
         shell: pwsh
         run: |
           $packageVersion = node -p "require('./package.json').version"
+          $extensionVersion = node -p "require('./extension/manifest.json').version"
           if ("v$packageVersion" -ne "${{ github.ref_name }}") {
             throw "Tag ${{ github.ref_name }} does not match package.json version $packageVersion."
           }
+          "desktop_version=$packageVersion" >> $env:GITHUB_OUTPUT
+          "extension_version=$extensionVersion" >> $env:GITHUB_OUTPUT
 
       - name: Install dependencies
         run: npm ci
@@ -46,23 +50,69 @@ jobs:
         run: |
           $packageVersion = node -p "require('./package.json').version"
           $extensionVersion = node -p "require('./extension/manifest.json').version"
+          $installerName = "SnapOverLAN-Setup-$packageVersion-x64.exe"
           $expected = @(
-            "dist/SnapOverLAN Setup $packageVersion-x64.exe",
+            "dist/latest.yml",
+            "dist/$installerName",
+            "dist/$installerName.blockmap",
             "dist/SnapOverLAN-$packageVersion-portable-x64.exe",
-            "dist/SnapOverLAN-extension-$extensionVersion.zip"
+            "dist/SnapOverLAN-extension-$extensionVersion.zip",
+            "dist/win-unpacked/resources/app-update.yml"
           )
           foreach ($artifact in $expected) {
             if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
               throw "Expected release artifact was not generated: $artifact"
             }
+            if ((Get-Item -LiteralPath $artifact).Length -le 0) {
+              throw "Expected release artifact is empty: $artifact"
+            }
+          }
+
+          $latestMetadata = Get-Content -LiteralPath "dist/latest.yml" -Raw
+          $versionPattern = [regex]::Escape($packageVersion)
+          $installerPattern = [regex]::Escape($installerName)
+          if ($latestMetadata -notmatch "(?m)^version:\s*$versionPattern\s*$") {
+            throw "dist/latest.yml does not match package.json version $packageVersion."
+          }
+          if ($latestMetadata -notmatch "(?m)^path:\s*$installerPattern\s*$") {
+            throw "dist/latest.yml does not point to $installerName."
+          }
+          if ($latestMetadata -notmatch "(?m)^\s+- url:\s*$installerPattern\s*$") {
+            throw "dist/latest.yml file URL does not point to $installerName."
+          }
+          if ($latestMetadata -notmatch "(?m)^\s+sha512:\s*\S+\s*$") {
+            throw "dist/latest.yml does not contain an installer sha512."
+          }
+          $sizeMatch = [regex]::Match($latestMetadata, "(?m)^\s+size:\s*([1-9][0-9]*)\s*$")
+          if (-not $sizeMatch.Success) {
+            throw "dist/latest.yml does not contain a valid installer size."
+          }
+          $installerSize = (Get-Item -LiteralPath "dist/$installerName").Length
+          if ([int64]$sizeMatch.Groups[1].Value -ne $installerSize) {
+            throw "dist/latest.yml installer size does not match dist/$installerName."
+          }
+          if ($latestMetadata -match "SnapOverLAN Setup") {
+            throw "dist/latest.yml still refers to the obsolete space-containing installer name."
+          }
+
+          $appUpdateMetadata = Get-Content -LiteralPath "dist/win-unpacked/resources/app-update.yml" -Raw
+          if ($appUpdateMetadata -notmatch "(?m)^owner:\s*azbejagodic\s*$" -or
+              $appUpdateMetadata -notmatch "(?m)^repo:\s*SnapOverLAN\s*$" -or
+              $appUpdateMetadata -notmatch "(?m)^provider:\s*github\s*$") {
+            throw "Packaged app-update.yml does not point to azbejagodic/SnapOverLAN."
           }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          draft: false
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            dist/SnapOverLAN Setup *-x64.exe
-            dist/SnapOverLAN-*-portable-x64.exe
-            dist/SnapOverLAN-extension-*.zip
+            dist/latest.yml
+            dist/SnapOverLAN-Setup-${{ steps.versions.outputs.desktop_version }}-x64.exe
+            dist/SnapOverLAN-Setup-${{ steps.versions.outputs.desktop_version }}-x64.exe.blockmap
+            dist/SnapOverLAN-${{ steps.versions.outputs.desktop_version }}-portable-x64.exe
+            dist/SnapOverLAN-extension-${{ steps.versions.outputs.extension_version }}.zip

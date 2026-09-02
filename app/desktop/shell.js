@@ -152,6 +152,9 @@ const createDesktopShell = ({
     createTray,
     createWindow,
     destroyTray,
+    getMainWindow: () => (
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    ),
     isMainWindowSender,
     openMainWindow,
     send,

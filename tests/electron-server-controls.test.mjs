@@ -35,6 +35,10 @@ const desktopShellSource = await readFile(
   path.join(projectRoot, 'app', 'desktop', 'shell.js'),
   'utf8',
 );
+const updateDialogControllerSource = await readFile(
+  path.join(projectRoot, 'app', 'desktop', 'update-dialog-controller.js'),
+  'utf8',
+);
 const serverSource = await readFile(serverEntry, 'utf8');
 const parentBridgeSource = await readFile(
   path.join(projectRoot, 'app', 'server', 'parent-bridge.js'),
@@ -71,7 +75,7 @@ const rendererFont = await readFile(path.join(
   'inter-latin-variable.woff2',
 ));
 const packageConfig = JSON.parse(await readFile(path.join(projectRoot, 'package.json'), 'utf8'));
-const requestQuitStart = mainSource.indexOf('async function requestQuit()');
+const requestQuitStart = mainSource.indexOf('async function requestQuit(');
 const requestQuitEnd = mainSource.indexOf("ipcMain.handle('server:get-state'", requestQuitStart);
 const requestQuitSource = mainSource.slice(requestQuitStart, requestQuitEnd);
 const windowCloseSource = desktopShellSource.match(
@@ -124,7 +128,7 @@ function waitForExit(child, timeoutMs = 5000) {
   ]);
 }
 
-test('preload exposes only narrow server, background, and auto-copy result methods', () => {
+test('preload exposes only narrow non-updater desktop methods', () => {
   assert.match(desktopShellSource, /preload:\s*preloadPath/);
   assert.match(desktopShellSource, /contextIsolation:\s*true/);
   assert.match(desktopShellSource, /nodeIntegration:\s*false/);
@@ -140,6 +144,10 @@ test('preload exposes only narrow server, background, and auto-copy result metho
   assert.match(preloadSource, /imageBytes\.byteLength > MAX_IMAGE_COPY_BYTES/);
   assert.match(preloadSource, /onAutoCopyResult/);
   assert.match(preloadSource, /onDesktopStateChanged/);
+  assert.doesNotMatch(
+    preloadSource,
+    /getUpdateState|downloadUpdate|restartAndInstallUpdate|onUpdateStateChanged|update:/,
+  );
   assert.doesNotMatch(preloadSource, /getAutoCopyFirstPhoto|setAutoCopyFirstPhoto|auto-copy:(?:get|set)/);
   assert.doesNotMatch(preloadSource, /ipcRenderer\.(?:send|sendSync)|require:\s*\(/);
   assert.doesNotMatch(preloadSource, /clipboard|nativeImage|node:fs|['"]fs['"]/);
@@ -186,6 +194,62 @@ test('tray Quit, before-quit, and repeated quits share one shutdown path', () =>
   assert.match(mainSource, /onQuit: \(\) => requestQuit\(\)/);
   assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?requestQuit\(\)/);
   assert.doesNotMatch(mainSource, /label: (?:serverIsRunning \? )?'(?:Start|Stop) Server/);
+});
+
+test('updater initialization starts after the visible desktop is ready and cannot fail startup', () => {
+  const readyStart = mainSource.indexOf("electronApp.whenReady().then(async () => {");
+  const windowShown = mainSource.indexOf('desktopShell.showMainWindow();', readyStart);
+  const updaterStarted = mainSource.indexOf('void initializeUpdateManager();', windowShown);
+  const fatalCatch = mainSource.indexOf("dialog.showErrorBox('SnapOverLAN could not start'", updaterStarted);
+  const initializeStart = mainSource.indexOf('const initializeUpdateManager = () =>');
+  const checkStart = mainSource.indexOf('updateManager.checkForUpdates().catch', initializeStart);
+
+  assert.ok(readyStart >= 0);
+  assert.ok(windowShown > readyStart);
+  assert.ok(updaterStarted > windowShown);
+  assert.ok(fatalCatch > updaterStarted);
+  assert.ok(initializeStart >= 0);
+  assert.ok(checkStart > initializeStart);
+  assert.match(mainSource, /updateManagerInitialization = \(async \(\) => \{[\s\S]*?createElectronUpdateManager/);
+  assert.match(
+    mainSource,
+    /createUpdateDialogController\([\s\S]*?updateManager\?\.isInstallationReady\(\)[\s\S]*?requestQuit\(\{ installUpdate: true \}\)/,
+  );
+  assert.match(mainSource, /updateManager\.onStateChanged\(\(state\) =>/);
+  assert.match(mainSource, /Initialization failed without affecting application startup/);
+});
+
+test('updater stays in the trusted main process with no renderer IPC or state forwarding', () => {
+  assert.doesNotMatch(mainSource, /ipcMain\.handle\('update:/);
+  assert.doesNotMatch(mainSource, /desktopShell\?\.send\('update:/);
+  assert.doesNotMatch(preloadSource, /update:/);
+  assert.match(mainSource, /dialog,[\s\S]*?getMainWindow: \(\) => desktopShell\.getMainWindow\(\)/);
+  assert.match(desktopShellSource, /getMainWindow: \(\) =>/);
+  assert.doesNotMatch(updateDialogControllerSource, /ipcRenderer|autoUpdater|releaseNotes|downloadedFile|https?:\/\//);
+});
+
+test('normal quit and update install share cleanup but use distinct final actions', () => {
+  const stopIndex = requestQuitSource.indexOf('await stopServer()');
+  const trayIndex = requestQuitSource.indexOf('desktopShell.destroyTray()');
+  const allowIndex = requestQuitSource.indexOf('allowQuit = true');
+  const installIndex = requestQuitSource.indexOf('updateManager?.installDownloadedUpdate()');
+  const normalQuitIndex = requestQuitSource.indexOf('electronApp.quit()');
+
+  assert.ok(stopIndex >= 0);
+  assert.ok(trayIndex > stopIndex);
+  assert.ok(allowIndex > trayIndex);
+  assert.ok(installIndex > allowIndex);
+  assert.ok(normalQuitIndex > installIndex);
+  assert.match(requestQuitSource, /if \(installStarted\) return true;[\s\S]*?electronApp\.quit\(\)/);
+  assert.match(requestQuitSource, /allowQuit = false;[\s\S]*?quitOperation = null/);
+});
+
+test('duplicate update restarts and before-quit cannot create a second shutdown loop', () => {
+  assert.match(requestQuitSource, /if \(quitOperation\) \{[\s\S]*?return quitOperation/);
+  assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?if \(allowQuit\)[\s\S]*?return/);
+  assert.match(requestQuitSource, /allowQuit = true;[\s\S]*?installDownloadedUpdate\(\)/);
+  assert.match(updateDialogControllerSource, /promptedVersions\.has\(version\)/);
+  assert.match(updateDialogControllerSource, /requestInstall\?\.\(\)/);
 });
 
 test('unrelated processes are never killed; only verified SnapOverLAN servers receive shutdown', () => {

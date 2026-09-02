@@ -17,6 +17,10 @@ test('Windows Setup remains an all-users assisted installer', async () => {
   const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
   const { nsis } = packageJson.build;
 
+  assert.deepEqual(packageJson.build.win.target, [
+    { target: 'nsis', arch: ['x64'] },
+    { target: 'portable', arch: ['x64'] },
+  ]);
   assert.equal(nsis.oneClick, false);
   assert.equal(nsis.perMachine, true);
   assert.equal(nsis.allowToChangeInstallationDirectory, false);
@@ -25,7 +29,27 @@ test('Windows Setup remains an all-users assisted installer', async () => {
   assert.equal(nsis.createDesktopShortcut, true);
   assert.equal(nsis.shortcutName, 'SnapOverLAN');
   assert.equal(nsis.include, 'build/installer.nsh');
-  assert.equal(nsis.artifactName, '${productName} Setup ${version}-${arch}.${ext}');
+  assert.equal(nsis.artifactName, '${productName}-Setup-${version}-${arch}.${ext}');
+  assert.equal(
+    packageJson.build.portable.artifactName,
+    '${productName}-${version}-portable-${arch}.${ext}',
+  );
+});
+
+test('update metadata is pinned to the canonical public repository without automatic publishing', async () => {
+  const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
+
+  assert.deepEqual(packageJson.repository, {
+    type: 'git',
+    url: 'https://github.com/azbejagodic/SnapOverLAN.git',
+  });
+  assert.deepEqual(packageJson.build.publish, [{
+    provider: 'github',
+    owner: 'azbejagodic',
+    repo: 'SnapOverLAN',
+  }]);
+  assert.match(packageJson.scripts.dist, /electron-builder --win --publish never/);
+  assert.equal(packageJson.version, '1.0.0');
 });
 
 test('custom NSIS hooks safely migrate private-profile installs and retain firewall cleanup', async () => {

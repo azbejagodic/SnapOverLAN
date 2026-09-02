@@ -1,6 +1,6 @@
 {
   "name": "snap-over-lan",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Local LAN photo transfer bridge between phone and PC",
   "repository": {
     "type": "git",

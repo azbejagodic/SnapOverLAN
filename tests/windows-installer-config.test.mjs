@@ -36,7 +36,7 @@ test('Windows Setup remains an all-users assisted installer', async () => {
   );
 });
 
-test('update metadata is pinned to the canonical public repository without automatic publishing', async () => {
+test('update feed is separate from canonical source metadata without automatic publishing', async () => {
   const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
 
   assert.deepEqual(packageJson.repository, {
@@ -46,7 +46,7 @@ test('update metadata is pinned to the canonical public repository without autom
   assert.deepEqual(packageJson.build.publish, [{
     provider: 'github',
     owner: 'azbejagodic',
-    repo: 'SnapOverLAN',
+    repo: 'SnapOverLAN-Releases',
   }]);
   assert.match(packageJson.scripts.dist, /electron-builder --win --publish never/);
   assert.equal(packageJson.version, '1.0.0');

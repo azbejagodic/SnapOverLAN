@@ -49,7 +49,7 @@ test('update feed is separate from canonical source metadata without automatic p
     repo: 'SnapOverLAN-Releases',
   }]);
   assert.match(packageJson.scripts.dist, /electron-builder --win --publish never/);
-  assert.equal(packageJson.version, '1.0.0');
+  assert.equal(packageJson.version, '1.0.1');
 });
 
 test('custom NSIS hooks safely migrate private-profile installs and retain firewall cleanup', async () => {

@@ -22,6 +22,8 @@ import { createSettingsStore } from './desktop/settings-store.js';
 import { createAutoCopyController } from './desktop/auto-copy-controller.js';
 import { downloadBatchToFolder } from './desktop/batch-download.js';
 import { createDesktopShell } from './desktop/shell.js';
+import { createUpdateDialogController } from './desktop/update-dialog-controller.js';
+import { createElectronUpdateManager } from './desktop/update-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +47,10 @@ let allowQuit = false;
 let serverManager = null;
 let autoCopyController = null;
 let desktopShell = null;
+let updateManager = null;
+let updateManagerInitialization = null;
+let removeUpdateStateListener = null;
+let updateDialogController = null;
 const settingsStore = createSettingsStore({
   getSettingsPath: () => path.join(electronApp.getPath('userData'), 'desktop-settings.json'),
 });
@@ -93,6 +99,40 @@ const sendDesktopState = () => {
     server: getServerStatePayload(),
     backgroundMode,
   });
+};
+
+const initializeUpdateManager = () => {
+  if (updateManagerInitialization) return updateManagerInitialization;
+  updateManagerInitialization = (async () => {
+    updateManager = await createElectronUpdateManager({
+      electronApp,
+      logger: {
+        warn: (message) => console.warn('SnapOverLAN updater:', message),
+      },
+    });
+    updateDialogController = createUpdateDialogController({
+      dialog,
+      getMainWindow: () => desktopShell.getMainWindow(),
+      logger: {
+        warn: (message) => console.warn('SnapOverLAN updater:', message),
+      },
+      requestInstall: () => (
+        updateManager?.isInstallationReady()
+          ? requestQuit({ installUpdate: true })
+          : false
+      ),
+    });
+    removeUpdateStateListener = updateManager.onStateChanged((state) => {
+      void updateDialogController.handleState(state);
+    });
+    void updateDialogController.handleState(updateManager.getState());
+    updateManager.checkForUpdates().catch(() => {
+      console.warn('SnapOverLAN updater: An unexpected update check failure was contained.');
+    });
+  })().catch(() => {
+    console.warn('SnapOverLAN updater: Initialization failed without affecting application startup.');
+  });
+  return updateManagerInitialization;
 };
 
 const handleServerStateChanged = (server) => {
@@ -228,11 +268,11 @@ async function setAutoCopyFirstPhoto(enabled) {
   return autoCopyFirstPhoto;
 }
 
-async function requestQuit() {
+async function requestQuit({ installUpdate = false } = {}) {
   if (quitOperation) {
     return quitOperation;
   }
-  quitOperation = (async () => {
+  const operation = (async () => {
     const serverOperation = serverManager.getOperation();
     if (serverOperation) {
       await serverOperation.catch(() => {});
@@ -246,9 +286,23 @@ async function requestQuit() {
     }
     desktopShell.destroyTray();
     allowQuit = true;
+    if (installUpdate) {
+      const installStarted = updateManager?.installDownloadedUpdate() === true;
+      if (installStarted) return true;
+
+      allowQuit = false;
+      console.error('SnapOverLAN updater: The downloaded update could not start installing.');
+      return false;
+    }
     electronApp.quit();
+    return true;
   })();
-  return quitOperation;
+  quitOperation = operation;
+  const result = await operation;
+  if (!result && quitOperation === operation) {
+    quitOperation = null;
+  }
+  return result;
 }
 
 const handleServerControl = async (operation) => {
@@ -308,6 +362,7 @@ if (!gotLock) {
       desktopShell.createTray();
     }
     desktopShell.showMainWindow();
+    void initializeUpdateManager();
   }).catch((error) => {
     dialog.showErrorBox('SnapOverLAN could not start', error.message || String(error));
     allowQuit = true;
@@ -330,5 +385,13 @@ if (!gotLock) {
     if (process.platform !== 'darwin' && !backgroundMode && !allowQuit) {
       requestQuit();
     }
+  });
+
+  electronApp.on('will-quit', () => {
+    removeUpdateStateListener?.();
+    removeUpdateStateListener = null;
+    updateDialogController?.dispose();
+    updateDialogController = null;
+    updateManager?.dispose();
   });
 }

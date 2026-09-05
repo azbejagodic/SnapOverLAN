@@ -37,7 +37,7 @@ The current end-user build target is Windows. Tagged releases are configured to 
 
 ### Windows Setup
 
-From [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases), download `SnapOverLAN Setup <version>-x64.exe` from a release that includes binary assets and run it. The per-machine installer creates Start Menu and desktop shortcuts and configures the required Private-network Windows Firewall rules.
+From [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases), download `SnapOverLAN-Setup-<version>-x64.exe` from a release that includes binary assets and run it. The per-machine installer creates Start Menu and desktop shortcuts and configures the required Private-network Windows Firewall rules.
 
 ### Portable app
 
@@ -45,7 +45,7 @@ Download `SnapOverLAN-<version>-portable-x64.exe` from the same release and run 
 
 ### Browser extension
 
-Download and extract `SnapOverLAN-extension-<extension-version>.zip` from the same release. The extension is versioned independently from the desktop app, so its filename version may differ from the release tag. Then:
+For the V2 release, download and extract `SnapOverLAN-extension-2.0.0.zip` from the same release. The extension version is aligned with the desktop product version for this release. Then:
 
 1. Open `chrome://extensions` or `brave://extensions`.
 2. Enable **Developer Mode**.
@@ -76,11 +76,11 @@ npm run release:build
 
 The generated files are written to `dist/`:
 
-- `SnapOverLAN Setup <version>-x64.exe`
+- `SnapOverLAN-Setup-<version>-x64.exe`
 - `SnapOverLAN-<version>-portable-x64.exe`
-- `SnapOverLAN-extension-<extension-version>.zip`
+- `SnapOverLAN-extension-<version>.zip`
 
-The desktop version comes from `package.json`; the independently maintained extension version comes from `extension/manifest.json`.
+The desktop version comes from `package.json`; for the V2 release, `extension/manifest.json` uses the same product version.
 
 ## Using SnapOverLAN
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SnapOverLAN",
-  "version": "1.0.3",
+  "version": "2.0.0",
   "description": "Fetch images from SnapOverLAN and copy image blobs to clipboard from the popup user gesture.",
   "icons": {
     "16": "icons/icon-16.png",

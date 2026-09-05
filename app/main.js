@@ -111,6 +111,7 @@ const initializeUpdateManager = () => {
       },
     });
     updateDialogController = createUpdateDialogController({
+      BrowserWindow,
       dialog,
       getMainWindow: () => desktopShell.getMainWindow(),
       logger: {

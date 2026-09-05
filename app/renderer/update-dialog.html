@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'"
+  />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SnapOverLAN Update</title>
+  <link rel="stylesheet" href="./update-dialog.css" />
+</head>
+<body>
+  <div class="titlebar-drag-region" aria-hidden="true">
+    <span class="titlebar-brand">
+      <img class="titlebar-brand-icon" src="../../assets/branding/snapoverlan-mark.svg" alt="" />
+      <span>SnapOverLAN</span>
+    </span>
+  </div>
+
+  <main class="update-shell">
+    <section class="update-panel" role="dialog" aria-modal="true" aria-labelledby="updateTitle">
+      <div class="update-copy">
+        <h1 id="updateTitle">SnapOverLAN Update</h1>
+        <p id="updateMessage" class="update-message"></p>
+        <p class="update-detail">Restart SnapOverLAN now to install the update?</p>
+      </div>
+      <div class="update-actions">
+        <button id="laterButton" class="update-button secondary" type="button">Later</button>
+        <button id="restartButton" class="update-button primary" type="button">Restart &amp; Update</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./update-dialog.js"></script>
+</body>
+</html>

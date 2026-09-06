@@ -8,8 +8,8 @@ const DEFAULT_RENDERER_PATH = fileURLToPath(new URL('../renderer/update-dialog.h
 const READY_WINDOW_OPTIONS = ({ parent = null, preloadPath = DEFAULT_PRELOAD_PATH } = {}) => {
   const options = {
     show: false,
-    width: 420,
-    height: 286,
+    width: 412,
+    height: 247,
     useContentSize: true,
     resizable: false,
     minimizable: false,

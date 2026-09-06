@@ -132,9 +132,12 @@ test('a downloaded update shows a secure SnapOverLAN-styled modal owned by a vis
   assert.equal(window.options.parent, owner);
   assert.equal(window.options.modal, true);
   assert.equal(window.options.title, 'SnapOverLAN Update');
+  assert.equal(window.options.width, 412);
+  assert.equal(window.options.height, 247);
   assert.equal(window.options.backgroundColor, '#343940');
   assert.equal(window.options.resizable, false);
   assert.equal(window.options.titleBarStyle, 'hidden');
+  assert.equal(window.options.titleBarOverlay.color, '#343940');
   assert.deepEqual(window.options.webPreferences, {
     preload: preloadPath,
     contextIsolation: true,
@@ -260,19 +263,23 @@ test('the popup renderer matches existing UI tokens and exposes only a narrow ac
     readFile(path.join(projectRoot, 'app', 'desktop', 'update-dialog-controller.js'), 'utf8'),
   ]);
 
-  assert.match(html, /<h1 id="updateTitle">SnapOverLAN Update<\/h1>/);
-  assert.match(html, /Restart SnapOverLAN now to install the update\?/);
+  assert.match(html, /<h1 id="updateTitle">Update ready!<\/h1>/);
+  assert.match(html, /A new version of SnapOverLAN is ready to install\./);
   assert.match(html, />Later<\/button>/);
   assert.match(html, />Restart &amp; Update<\/button>/);
   assert.match(html, /Content-Security-Policy/);
   assert.match(css, /--bg: #343940/);
-  assert.match(css, /--bg-deep: #2d3238/);
   assert.match(css, /--radius-lg: 22px/);
+  assert.match(css, /\.titlebar-drag-region\s*\{[^}]*background: var\(--bg\)/s);
+  assert.match(css, /body\s*\{[^}]*background: var\(--bg\)/s);
+  assert.doesNotMatch(css, /--bg-deep/);
   assert.match(css, /inter-latin-variable\.woff2/);
   assert.match(css, /linear-gradient\(145deg, #c7f7ff, #91e4f2\)/);
-  assert.match(renderer, /SnapOverLAN \$\{normalizedVersion\} is ready to install\./);
+  assert.match(renderer, /Restart now to update to version \$\{normalizedVersion\}\./);
   assert.match(renderer, /chooseAction\('later'\)/);
   assert.match(renderer, /chooseAction\('restart'\)/);
+  assert.match(renderer, /restartButton\.focus\(\)/);
+  assert.doesNotMatch(renderer, /laterButton\.focus\(\)/);
   assert.match(preload, /ALLOWED_ACTIONS = new Set\(\['later', 'restart'\]\)/);
   assert.match(preload, /ipcRenderer\.send\(UPDATE_DIALOG_ACTION_CHANNEL, action\)/);
   assert.doesNotMatch(preload, /autoUpdater|checkForUpdates|quitAndInstall|update-manager/);

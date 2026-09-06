@@ -10,7 +10,6 @@
   color-scheme: dark;
   --font-ui: "SnapOverLAN UI", system-ui, sans-serif;
   --bg: #343940;
-  --bg-deep: #2d3238;
   --panel: rgba(200, 246, 255, 0.97);
   --panel-strong: rgba(158, 232, 245, 0.95);
   --ink: #0d1c26;
@@ -38,7 +37,7 @@ html {
 body {
   margin: 0;
   color: var(--white);
-  background: linear-gradient(145deg, var(--bg) 0%, var(--bg-deep) 100%);
+  background: var(--bg);
   font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 500;
@@ -56,6 +55,7 @@ body {
   padding-left: 12px;
   display: flex;
   align-items: center;
+  background: var(--bg);
   app-region: drag;
   -webkit-app-region: drag;
 }
@@ -78,13 +78,14 @@ body {
 .update-shell {
   width: 100%;
   height: 100%;
-  padding: 48px 20px 20px;
+  padding: 36px 16px 16px;
   display: grid;
   place-items: center;
 }
 
 .update-panel {
-  width: 100%;
+  width: 380px;
+  height: 194.828125px;
   min-height: 190px;
   padding: 22px;
   display: flex;

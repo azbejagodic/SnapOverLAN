@@ -229,19 +229,28 @@ test('updater stays in the trusted main process with no renderer IPC or state fo
 });
 
 test('normal quit and update install share cleanup but use distinct final actions', () => {
+  const cleanupStartedIndex = requestQuitSource.indexOf('Update install requested; cleanup starting.');
   const stopIndex = requestQuitSource.indexOf('await stopServer()');
   const trayIndex = requestQuitSource.indexOf('desktopShell.destroyTray()');
   const allowIndex = requestQuitSource.indexOf('allowQuit = true');
+  const cleanupCompletedIndex = requestQuitSource.indexOf('Cleanup completed; handing off to quitAndInstall.');
   const installIndex = requestQuitSource.indexOf('updateManager?.installDownloadedUpdate()');
   const normalQuitIndex = requestQuitSource.indexOf('electronApp.quit()');
 
-  assert.ok(stopIndex >= 0);
+  assert.ok(cleanupStartedIndex >= 0);
+  assert.ok(stopIndex > cleanupStartedIndex);
   assert.ok(trayIndex > stopIndex);
   assert.ok(allowIndex > trayIndex);
-  assert.ok(installIndex > allowIndex);
+  assert.ok(cleanupCompletedIndex > allowIndex);
+  assert.ok(installIndex > cleanupCompletedIndex);
   assert.ok(normalQuitIndex > installIndex);
   assert.match(requestQuitSource, /if \(installStarted\) return true;[\s\S]*?electronApp\.quit\(\)/);
   assert.match(requestQuitSource, /allowQuit = false;[\s\S]*?quitOperation = null/);
+  assert.equal(
+    (requestQuitSource.match(/electronApp\.quit\(\)/g) || []).length,
+    1,
+    'only the normal quit branch may call Electron app.quit directly',
+  );
 });
 
 test('duplicate update restarts and before-quit cannot create a second shutdown loop', () => {

@@ -107,6 +107,12 @@ const createUpdateManager = ({
     } catch {}
   };
 
+  const info = (message) => {
+    try {
+      logger?.info?.(message);
+    } catch {}
+  };
+
   const publishState = (nextState) => {
     state = nextState;
     for (const listener of [...listeners]) {
@@ -201,11 +207,18 @@ const createUpdateManager = ({
     ) {
       return false;
     }
-    if (installStarted) return true;
+    if (installStarted) {
+      info('Duplicate update install request ignored.');
+      return true;
+    }
 
     installStarted = true;
     try {
-      updater.quitAndInstall(false, true);
+      info('Handing off the downloaded update to the installer with restart requested.');
+      // electron-updater 6.8.9 uses positional arguments. The assisted NSIS
+      // installer only honors --force-run outside its hidden Finish page when
+      // the update is silent, so both flags must be true for a reliable restart.
+      updater.quitAndInstall(true, true);
       return true;
     } catch (error) {
       installStarted = false;

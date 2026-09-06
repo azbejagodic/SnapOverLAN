@@ -107,6 +107,7 @@ const initializeUpdateManager = () => {
     updateManager = await createElectronUpdateManager({
       electronApp,
       logger: {
+        info: (message) => console.log('SnapOverLAN updater:', message),
         warn: (message) => console.warn('SnapOverLAN updater:', message),
       },
     });
@@ -274,6 +275,9 @@ async function requestQuit({ installUpdate = false } = {}) {
     return quitOperation;
   }
   const operation = (async () => {
+    if (installUpdate) {
+      console.log('SnapOverLAN updater: Update install requested; cleanup starting.');
+    }
     const serverOperation = serverManager.getOperation();
     if (serverOperation) {
       await serverOperation.catch(() => {});
@@ -288,6 +292,7 @@ async function requestQuit({ installUpdate = false } = {}) {
     desktopShell.destroyTray();
     allowQuit = true;
     if (installUpdate) {
+      console.log('SnapOverLAN updater: Cleanup completed; handing off to quitAndInstall.');
       const installStarted = updateManager?.installDownloadedUpdate() === true;
       if (installStarted) return true;
 

@@ -22,6 +22,7 @@ class FakeUpdater extends EventEmitter {
     super();
     this.autoDownload = false;
     this.autoInstallOnAppQuit = true;
+    this.autoRunAppAfterInstall = false;
     this.checkCalls = 0;
     this.installCalls = 0;
     this.checkImplementation = async () => ({
@@ -81,6 +82,8 @@ test('development builds are disabled without contacting the updater', async () 
   assert.equal(manager.isEnabled(), false);
   await manager.checkForUpdates();
   assert.equal(updater.checkCalls, 0);
+  assert.equal(manager.installDownloadedUpdate(), false);
+  assert.equal(updater.installCalls, 0);
 });
 
 test('the Electron manager does not load electron-updater during development', async () => {
@@ -117,6 +120,23 @@ test('electron-builder portable builds are disabled', async () => {
   assert.equal(manager.getState().reason, 'portable');
   await manager.checkForUpdates();
   assert.equal(updater.checkCalls, 0);
+  assert.equal(manager.installDownloadedUpdate(), false);
+  assert.equal(updater.installCalls, 0);
+});
+
+test('packaged unsupported platforms cannot install updates', () => {
+  const updater = new FakeUpdater();
+  const manager = createUpdateManager({
+    isPackaged: true,
+    platform: 'linux',
+    env: {},
+    updater,
+  });
+
+  updater.emit('update-downloaded', { version: '2.0.0' });
+  assert.equal(manager.getRuntime().kind, 'unsupported');
+  assert.equal(manager.installDownloadedUpdate(), false);
+  assert.equal(updater.installCalls, 0);
 });
 
 test('the Electron manager does not load electron-updater in a portable executable', async () => {
@@ -274,7 +294,7 @@ test('install is refused until an update has downloaded', () => {
   assert.equal(manager.isInstallationReady(), false);
 });
 
-test('a downloaded update invokes quitAndInstall once with automatic quit install disabled', () => {
+test('a downloaded update invokes the 6.8.9 silent force-run handoff exactly once', () => {
   const updater = new FakeUpdater();
   const installArguments = [];
   updater.installImplementation = (...args) => installArguments.push(args);
@@ -285,8 +305,13 @@ test('a downloaded update invokes quitAndInstall once with automatic quit instal
   assert.equal(manager.installDownloadedUpdate(), true);
   assert.equal(manager.installDownloadedUpdate(), true);
   assert.equal(updater.installCalls, 1);
-  assert.deepEqual(installArguments, [[false, true]]);
+  assert.deepEqual(installArguments, [[true, true]]);
   assert.equal(updater.autoInstallOnAppQuit, false);
+  assert.equal(
+    updater.autoRunAppAfterInstall,
+    false,
+    'silent installs use the positional force-run argument, not autoRunAppAfterInstall',
+  );
 });
 
 test('a synchronous quitAndInstall failure is sanitized and non-fatal', () => {

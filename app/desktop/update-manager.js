@@ -151,10 +151,11 @@ const createUpdateManager = ({
         progress,
       }));
     },
-    'update-downloaded': (info) => {
+    'update-downloaded': (updateInfo) => {
       if (!updaterAvailable) return;
+      info('Update downloaded and ready to install.');
       publishState(createState('downloaded', {
-        version: info?.version || state.version,
+        version: updateInfo?.version || state.version,
       }));
     },
     error: publishError,
@@ -214,10 +215,10 @@ const createUpdateManager = ({
 
     installStarted = true;
     try {
-      info('Handing off the downloaded update to the installer with restart requested.');
+      info('quitAndInstall requested (isSilent=true, isForceRunAfter=true).');
       // electron-updater 6.8.9 uses positional arguments. The assisted NSIS
       // installer only honors --force-run outside its hidden Finish page when
-      // the update is silent, so both flags must be true for a reliable restart.
+      // the update is silent, so both flags are required for this handoff.
       updater.quitAndInstall(true, true);
       return true;
     } catch (error) {

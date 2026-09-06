@@ -24,7 +24,7 @@ test('Windows Setup remains an all-users assisted installer', async () => {
   assert.equal(nsis.oneClick, false);
   assert.equal(nsis.perMachine, true);
   assert.equal(nsis.allowToChangeInstallationDirectory, false);
-  assert.equal(nsis.runAfterFinish, false);
+  assert.equal(nsis.runAfterFinish, true);
   assert.equal(nsis.createStartMenuShortcut, true);
   assert.equal(nsis.createDesktopShortcut, true);
   assert.equal(nsis.shortcutName, 'SnapOverLAN');
@@ -65,6 +65,9 @@ test('custom NSIS hooks safely migrate private-profile installs and retain firew
   assert.doesNotMatch(source, /DeleteReg(?:Key|Value)/);
 
   assert.match(source, /WriteRegStr HKLM "\$\{UNINSTALL_REGISTRY_KEY\}" InstallLocation "\$INSTDIR"/);
+  const customInstall = source.match(/!macro customInstall\r?\n([\s\S]*?)!macroend/)?.[1];
+  assert.ok(customInstall, 'customInstall macro must exist');
+  assert.match(customInstall, /StrCpy \$launchLink "\$appExe"/);
   assert.match(source, /firewall add rule name="\$\{SNAPOVERLAN_FIREWALL_RULE\}"[^\r\n]*protocol=TCP localport=8787 profile=private/);
   assert.match(source, /firewall add rule name="\$\{SNAPOVERLAN_MDNS_FIREWALL_RULE\}"[^\r\n]*protocol=UDP localport=5353 remoteip=localsubnet profile=private/);
 

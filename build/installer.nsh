@@ -67,6 +67,11 @@
   DetailPrint "Configuring Windows Firewall rule: ${SNAPOVERLAN_MDNS_FIREWALL_RULE}"
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${SNAPOVERLAN_MDNS_FIREWALL_RULE}"'
   nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${SNAPOVERLAN_MDNS_FIREWALL_RULE}" dir=in action=allow protocol=UDP localport=5353 remoteip=localsubnet profile=private enable=yes description="${SNAPOVERLAN_MDNS_FIREWALL_DESC}"'
+
+  ; Builder normally launches the all-users Start Menu shortcut here. StdUtils
+  ; reports success but does not resolve that shortcut after credentialed UAC.
+  ; Launch the same installed executable directly in both Finish and update flows.
+  StrCpy $launchLink "$appExe"
 !macroend
 
 !macro customUnInstall

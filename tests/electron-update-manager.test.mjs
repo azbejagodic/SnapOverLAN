@@ -297,8 +297,14 @@ test('install is refused until an update has downloaded', () => {
 test('a downloaded update invokes the 6.8.9 silent force-run handoff exactly once', () => {
   const updater = new FakeUpdater();
   const installArguments = [];
+  const infoMessages = [];
   updater.installImplementation = (...args) => installArguments.push(args);
-  const manager = createInstalledManager(updater);
+  const manager = createInstalledManager(updater, {
+    logger: {
+      info: (message) => infoMessages.push(message),
+      warn() {},
+    },
+  });
   updater.emit('update-available', { version: '2.0.0' });
   updater.emit('update-downloaded', { version: '2.0.0' });
 
@@ -306,6 +312,11 @@ test('a downloaded update invokes the 6.8.9 silent force-run handoff exactly onc
   assert.equal(manager.installDownloadedUpdate(), true);
   assert.equal(updater.installCalls, 1);
   assert.deepEqual(installArguments, [[true, true]]);
+  assert.deepEqual(infoMessages, [
+    'Update downloaded and ready to install.',
+    'quitAndInstall requested (isSilent=true, isForceRunAfter=true).',
+    'Duplicate update install request ignored.',
+  ]);
   assert.equal(updater.autoInstallOnAppQuit, false);
   assert.equal(
     updater.autoRunAppAfterInstall,

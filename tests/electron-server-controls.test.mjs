@@ -261,6 +261,17 @@ test('duplicate update restarts and before-quit cannot create a second shutdown 
   assert.match(updateDialogControllerSource, /requestInstall\?\.\(\)/);
 });
 
+test('temporary updater diagnostics capture restart handoff and earliest relaunched-app state', () => {
+  assert.match(mainSource, /getPath\('userData'\), 'updater-debug\.log'/);
+  assert.match(mainSource, /writeUpdaterDebugLog\('app-startup',[\s\S]*?electronApp\.getVersion\(\)[\s\S]*?receivedUpdated:[\s\S]*?process\.argv\.includes\('--updated'\)/);
+  assert.match(mainSource, /writeUpdaterDebugLog\('single-instance-lock', \{ acquired: gotLock \}\)/);
+  assert.match(mainSource, /electronAutoUpdater\.on\('before-quit-for-update',[\s\S]*?writeUpdaterDebugLog\('before-quit-for-update'\)/);
+  assert.match(requestQuitSource, /writeUpdaterDebugLog\('restart-and-update-requested'\)[\s\S]*?writeUpdaterDebugLog\('cleanup-started'\)[\s\S]*?await stopServer\(\)[\s\S]*?writeUpdaterDebugLog\('cleanup-completed'\)[\s\S]*?installDownloadedUpdate\(\)/);
+  assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?writeUpdaterDebugLog\('before-quit'/);
+  assert.match(mainSource, /electronApp\.on\('will-quit',[\s\S]*?writeUpdaterDebugLog\('will-quit'/);
+  assert.doesNotMatch(mainSource, /writeUpdaterDebugLog\([^\n]*process\.argv(?!\.includes)/);
+});
+
 test('unrelated processes are never killed; only verified SnapOverLAN servers receive shutdown', () => {
   assert.match(desktopServerClientSource, /control\?\.service !== SERVER_CONTROL_ID/);
   assert.match(desktopServerClientSource, /'x-snapoverlan-shutdown-token': token/);

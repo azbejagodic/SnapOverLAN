@@ -13,10 +13,13 @@ test('preview contains only shared UI, window lifetime management, and an empty 
   assert.match(harness, /!insertmacro closeSnapOverLANUpdateProgress/);
   assert.match(harness, /Section\s+SectionEnd/);
   assert.match(harness, /GetAsyncKeyState/);
-  const instructions = `${harness}\n${ui}`.replace(/;[^\n]*/g, '');
-  assert.doesNotMatch(instructions, /installer\.nsh|electron|https?:|\b(?:File|SetOutPath|Write\w*|Delete\w*|RMDir|Rename|Exec\w*|CreateShortCut|ReadReg\w*)\b/i);
+  // Allow only this compile-time icon resource; it extracts no file at runtime.
+  const iconResource = /^Icon "\$\{__FILEDIR__\}\\\.\.\\assets\\electron\\app\.ico"\r?$/gm;
+  assert.match(ui, iconResource);
+  const instructions = `${harness}\n${ui}`.replace(/;[^\n]*/g, '').replace(iconResource, '');
+  assert.doesNotMatch(instructions, /installer\.nsh|electron|https?:|\b(?:File|SetOutPath|Write\w*|Delete(?!(?:Object|DC)\b)\w*|RMDir|Rename|Exec\w*|CreateShortCut|ReadReg\w*)\b/i);
   const calls = [...instructions.matchAll(/System::Call '([^']*)'/g)].map(match => match[1]);
   for (const call of calls) {
-    assert.match(call, /^(?:\*|user32::(?:GetWindowRect|SetWindowPos|RedrawWindow|IsWindow|GetForegroundWindow|GetAsyncKeyState)\()/);
+    assert.match(call, /^(?:\*|user32::(?:GetWindowRect|SetWindowPos|RedrawWindow|IsWindow|GetForegroundWindow|GetAsyncKeyState|GetDC|ReleaseDC|FillRect|DrawTextW|GetWindowLong|SetWindowLong|SetWindowRgn|GetSystemMetrics|LoadImageW)\(|gdi32::(?:GetDeviceCaps|CreateCompatibleDC|CreateCompatibleBitmap|SelectObject|CreateSolidBrush|DeleteObject|GetStockObject|RoundRect|SetBkMode|SetTextColor|DeleteDC|CreateRoundRectRgn)\(|kernel32::(?:MulDiv|GetModuleHandleW)\()/);
   }
 });

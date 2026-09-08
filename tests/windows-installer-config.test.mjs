@@ -92,10 +92,10 @@ test('NSIS owns update progress only for the --updated installer path', async ()
   assert.match(source, /!include .*update-progress-ui\.nsh/);
   assert.match(ui, /Banner::show/);
   assert.match(ui, /"SnapOverLAN Update"/);
-  assert.match(ui, /"Updating SnapOverLAN…"/);
-  assert.match(ui, /Installing the latest version\./);
+  assert.match(ui, /"Updating SnapOverLAN"/);
+  assert.match(ui, /Installing the latest update\./);
   assert.match(ui, /SnapOverLAN will reopen automatically\./);
-  assert.match(ui, /This may take up to 30 seconds\./);
+  assert.match(ui, /This should only take a moment\./);
   assert.match(ui, /Banner::getWindow/);
   assert.match(ui, /GetDlgItem \$8 \$9 1030/);
   assert.match(ui, /GetDlgItem \$R6 \$9 76/);

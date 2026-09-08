@@ -4,11 +4,30 @@
 !define SNAPOVERLAN_MDNS_FIREWALL_DESC "allow local devices to discover SnapOverLAN over mDNS"
 
 !ifndef BUILD_UNINSTALLER
+!include "${__FILEDIR__}\update-progress-ui.nsh"
+
+!macro customHeader
+  Var SnapOverLANUpdateProgressVisible
+
+  ; This callback also runs on aborted/failed installs, so the installer never
+  ; leaves its modeless update-progress window behind.
+  Function .onGUIEnd
+    !insertmacro closeSnapOverLANUpdateProgress
+  FunctionEnd
+!macroend
+
 ; Electron Builder reuses its HKLM InstallLocation during upgrades. If an older
 ; machine-wide install was accidentally registered inside a user's profile,
 ; leave the record intact for Builder's normal old-version uninstall, but move
 ; the replacement installation back to the per-machine default.
 !macro customInit
+  StrCpy $SnapOverLANUpdateProgressVisible "0"
+  ; electron-builder's isUpdated condition is true only when --updated is present.
+  ; /S by itself therefore remains a fully silent install with no custom window.
+  ${If} ${isUpdated}
+    !insertmacro showSnapOverLANUpdateProgress
+  ${EndIf}
+
   ReadRegStr $R0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
   StrCpy $R8 "$INSTDIR"
   ${If} $R8 != ""
@@ -72,6 +91,10 @@
   ; reports success but does not resolve that shortcut after credentialed UAC.
   ; Launch the same installed executable directly in both Finish and update flows.
   StrCpy $launchLink "$appExe"
+
+  ; customInstall runs after application extraction, shortcut creation, registry
+  ; writes, and the firewall work above, immediately before Builder relaunches.
+  !insertmacro closeSnapOverLANUpdateProgress
 !macroend
 
 !macro customUnInstall

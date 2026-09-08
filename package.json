@@ -12,6 +12,7 @@
   "type": "module",
   "main": "app/main.js",
   "scripts": {
+    "preview:update-ui": "node scripts/preview-update-ui.mjs",
     "start": "electron app/main.js",
     "server": "node app/server/index.js",
     "desktop": "electron app/main.js",

@@ -76,3 +76,38 @@ test('custom NSIS hooks safely migrate private-profile installs and retain firew
   assert.equal(deleteUploadRule.length, 2, 'install and uninstall must both remove the TCP rule');
   assert.equal(deleteMdnsRule.length, 2, 'install and uninstall must both remove the mDNS rule');
 });
+
+test('NSIS owns update progress only for the --updated installer path', async () => {
+  const source = await fs.readFile(path.join(projectRoot, 'build', 'installer.nsh'), 'utf8');
+  const customInit = source.match(/!macro customInit\r?\n([\s\S]*?)!macroend/)?.[1];
+  const customInstall = source.match(/!macro customInstall\r?\n([\s\S]*?)!macroend/)?.[1];
+
+  assert.ok(customInit, 'customInit macro must exist');
+  assert.ok(customInstall, 'customInstall macro must exist');
+
+  const updateBranch = customInit.match(/\$\{If\} \$\{isUpdated\}([\s\S]*?)\$\{EndIf\}/)?.[1];
+  assert.ok(updateBranch, 'update progress must be gated by electron-builder isUpdated');
+  assert.match(updateBranch, /!insertmacro showSnapOverLANUpdateProgress/);
+  const ui = await fs.readFile(path.join(projectRoot, 'build', 'update-progress-ui.nsh'), 'utf8');
+  assert.match(source, /!include .*update-progress-ui\.nsh/);
+  assert.match(ui, /Banner::show/);
+  assert.match(ui, /"SnapOverLAN Update"/);
+  assert.match(ui, /"Updating SnapOverLAN…"/);
+  assert.match(ui, /Installing the latest version\./);
+  assert.match(ui, /SnapOverLAN will reopen automatically\./);
+  assert.match(ui, /This may take up to 30 seconds\./);
+  assert.match(ui, /Banner::getWindow/);
+  assert.match(ui, /GetDlgItem \$8 \$9 1030/);
+  assert.match(ui, /GetDlgItem \$R6 \$9 76/);
+  assert.match(ui, /FindWindow \$R7 "Static" "" \$9 \$8/);
+  assert.match(ui, /GetWindowRect\(p r9, p r10\)/);
+  assert.match(ui, /user32::SetWindowPos\(p r8/);
+  assert.match(ui, /user32::RedrawWindow\(p r9/);
+  assert.doesNotMatch(updateBranch, /\$\{Silent\}/);
+
+  const outsideUpdateBranch = customInit.replace(/\$\{If\} \$\{isUpdated\}[\s\S]*?\$\{EndIf\}/, '');
+  assert.doesNotMatch(outsideUpdateBranch, /Banner::show/);
+  assert.match(customInstall, /StrCpy \$launchLink "\$appExe"/);
+  assert.match(customInstall, /!insertmacro closeSnapOverLANUpdateProgress/);
+  assert.match(source, /Function \.onGUIEnd\r?\n\s*!insertmacro closeSnapOverLANUpdateProgress/);
+});

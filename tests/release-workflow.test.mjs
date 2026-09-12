@@ -43,8 +43,8 @@ test('release verification rejects incompatible generated update metadata', () =
   assert.match(workflow, /installer size does not match/);
   assert.match(workflow, /obsolete space-containing installer name/);
   assert.match(workflow, /owner:\\s\*azbejagodic/);
-  assert.match(workflow, /repo:\\s\*SnapOverLAN-Releases/);
-  assert.match(workflow, /azbejagodic\/SnapOverLAN-Releases/);
+  assert.match(workflow, /repo:\\s\*SnapOverLAN/);
+  assert.match(workflow, /azbejagodic\/SnapOverLAN/);
   assert.match(workflow, /provider:\\s\*github/);
 });
 

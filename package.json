@@ -44,7 +44,7 @@
       {
         "provider": "github",
         "owner": "azbejagodic",
-        "repo": "SnapOverLAN-Releases"
+        "repo": "SnapOverLAN"
       }
     ],
     "asar": true,

@@ -97,9 +97,9 @@ jobs:
 
           $appUpdateMetadata = Get-Content -LiteralPath "dist/win-unpacked/resources/app-update.yml" -Raw
           if ($appUpdateMetadata -notmatch "(?m)^owner:\s*azbejagodic\s*$" -or
-              $appUpdateMetadata -notmatch "(?m)^repo:\s*SnapOverLAN-Releases\s*$" -or
+              $appUpdateMetadata -notmatch "(?m)^repo:\s*SnapOverLAN\s*$" -or
               $appUpdateMetadata -notmatch "(?m)^provider:\s*github\s*$") {
-            throw "Packaged app-update.yml does not point to azbejagodic/SnapOverLAN-Releases."
+            throw "Packaged app-update.yml does not point to azbejagodic/SnapOverLAN."
           }
 
       - name: Create GitHub Release

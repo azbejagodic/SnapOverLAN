@@ -185,6 +185,10 @@ const createUpdateManager = ({
     const operation = Promise.resolve()
       .then(() => updater.checkForUpdates())
       .then((result) => {
+        // Auto-download outlives the check and rejects separately from error events.
+        void result?.downloadPromise?.catch((error) => {
+          if (!disposed && state.status !== 'error') publishError(error);
+        });
         if (state.status === 'checking' && result?.isUpdateAvailable === true) {
           publishState(createState('available', { version: result.updateInfo?.version }));
         } else if (state.status === 'checking' && result?.isUpdateAvailable === false) {
@@ -220,6 +224,11 @@ const createUpdateManager = ({
       // installer only honors --force-run outside its hidden Finish page when
       // the update is silent, so both flags are required for this handoff.
       updater.quitAndInstall(true, true);
+      // BaseUpdater can reject the handoff by emitting an error without throwing.
+      if (state.status === 'error') {
+        installStarted = false;
+        return false;
+      }
       return true;
     } catch (error) {
       installStarted = false;

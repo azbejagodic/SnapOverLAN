@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { classifyServerStatus } from '../app/server/identity.js';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -78,6 +80,24 @@ const packageConfig = JSON.parse(await readFile(path.join(projectRoot, 'package.
 const requestQuitStart = mainSource.indexOf('async function requestQuit(');
 const requestQuitEnd = mainSource.indexOf("ipcMain.handle('server:get-state'", requestQuitStart);
 const requestQuitSource = mainSource.slice(requestQuitStart, requestQuitEnd);
+// Execute the actual main-process shutdown function with controlled resources.
+const createQuitHarness = ({ stopServer, pendingOperation = null } = {}) => {
+  const events = [];
+  const context = {
+    quitOperation: null,
+    allowQuit: false,
+    updateInstallRequested: false,
+    console: { log() {}, error() {} },
+    writeUpdaterDebugLog() {},
+    serverManager: { getOperation: () => pendingOperation, isRunning: () => true },
+    stopServer: async () => { events.push('stop'); await stopServer?.(); },
+    desktopShell: { destroyTray: () => events.push('tray') },
+    updateManager: { installDownloadedUpdate: () => { events.push('install'); return true; } },
+    electronApp: { quit: () => events.push('quit') },
+  };
+  const requestQuit = runInNewContext(`${requestQuitSource}\nrequestQuit`, context);
+  return { context, events, requestQuit };
+};
 const windowCloseSource = desktopShellSource.match(
   /mainWindow\.on\('close',[\s\S]*?mainWindow\.on\('closed'/,
 )?.[0];
@@ -259,6 +279,87 @@ test('duplicate update restarts and before-quit cannot create a second shutdown 
   assert.match(requestQuitSource, /allowQuit = true;[\s\S]*?installDownloadedUpdate\(\)/);
   assert.match(updateDialogControllerSource, /promptedVersions\.has\(version\)/);
   assert.match(updateDialogControllerSource, /requestInstall\?\.\(\)/);
+});
+
+test('failed server cleanup blocks update installation and allows a later quit', async () => {
+  let failStop = true;
+  const { context, events, requestQuit } = createQuitHarness({
+    stopServer: async () => { if (failStop) throw new Error('Server still owns the port'); },
+  });
+  assert.equal(await requestQuit({ installUpdate: true }), false);
+  assert.deepEqual(events, ['stop']);
+  assert.equal(context.allowQuit, false);
+  assert.equal(context.updateInstallRequested, false);
+  assert.equal(context.quitOperation, null);
+  failStop = false;
+  assert.equal(await requestQuit(), true);
+  assert.deepEqual(events, ['stop', 'stop', 'tray', 'quit']);
+});
+
+test('update restart waits for pending server work and shares cleanup across requests', async () => {
+  let finishPending;
+  const pendingOperation = new Promise((resolve) => { finishPending = resolve; });
+  const { context, events, requestQuit } = createQuitHarness({ pendingOperation });
+  const first = requestQuit({ installUpdate: true });
+  const second = requestQuit({ installUpdate: true });
+  const normalQuit = requestQuit();
+  assert.deepEqual(events, []);
+  finishPending();
+  assert.deepEqual(await Promise.all([first, second, normalQuit]), [true, true, true]);
+  assert.deepEqual(events, ['stop', 'tray', 'install']);
+  assert.equal(context.allowQuit, true);
+});
+
+test('a failed forced stop retains the owned child so cleanup can be retried', async () => {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.connected = false;
+  let spawned = false;
+  let killCalls = 0;
+  child.kill = () => {
+    killCalls += 1;
+    if (killCalls === 1) return false;
+    child.exitCode = 0;
+    child.emit('exit', 0, null);
+    return true;
+  };
+  const managerSource = desktopServerManagerSource.slice(
+    desktopServerManagerSource.indexOf('const SERVER_STOP_TIMEOUT_MS'),
+    desktopServerManagerSource.lastIndexOf('export {'),
+  );
+  const createManager = runInNewContext(`${managerSource}\ncreateServerManager`, {
+    console: { info() {}, warn() {}, error() {} },
+    createServerClient: () => ({
+      getServerIdentity: async () => spawned ? { shutdownToken: 'a'.repeat(64) } : null,
+      isPortInUse: async () => false,
+    }),
+    path,
+    process: { env: {}, pid: 123 },
+    setTimeout,
+    clearTimeout,
+    spawn: () => { spawned = true; return child; },
+  });
+  const manager = createManager({
+    electronApp: { isPackaged: false },
+    getAutoCopyEnabled: () => false,
+    getStartupLogPath: () => '',
+    isQuitting: () => false,
+    onAutoCopyUnavailable() {},
+    onMessage: async () => {},
+    onStateChanged() {},
+    port: 8787,
+    projectRoot,
+    serverPath: serverEntry,
+    serverOrigin: 'http://localhost:8787',
+    writeStartupLog: async () => {},
+  });
+  await manager.start();
+  await assert.rejects(manager.stop(), /owned server process did not stop cleanly/);
+  assert.equal(manager.isOwnedProcess(child), true);
+  assert.equal(manager.getState().owned, true);
+  await manager.stop();
+  assert.equal(killCalls, 2);
+  assert.equal(manager.isRunning(), false);
 });
 
 test('temporary updater diagnostics capture restart handoff and earliest relaunched-app state', () => {

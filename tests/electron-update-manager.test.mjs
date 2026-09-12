@@ -340,3 +340,43 @@ test('a synchronous quitAndInstall failure is sanitized and non-fatal', () => {
   assert.equal(manager.getState().status, 'error');
   assert.equal(manager.getState().message, 'The update could not be completed.');
 });
+
+test('an emitted installation error is reported as a rejected handoff and permits retry', () => {
+  const updater = new FakeUpdater();
+  updater.installImplementation = () => {
+    // BaseUpdater reports missing cached installers by emitting, without throwing.
+    updater.emit('error', new Error("No update filepath provided, can't quit and install"));
+  };
+  const manager = createInstalledManager(updater);
+  updater.emit('update-downloaded', { version: '2.0.0' });
+
+  assert.equal(manager.installDownloadedUpdate(), false);
+  assert.equal(manager.getState().status, 'error');
+  updater.installImplementation = () => {};
+  updater.emit('update-downloaded', { version: '2.0.0' });
+  assert.equal(manager.installDownloadedUpdate(), true);
+  assert.equal(updater.installCalls, 2);
+});
+
+test('automatic download rejection is consumed even after checkForUpdates resolves', async () => {
+  const updater = new FakeUpdater();
+  const download = deferred();
+  updater.checkImplementation = async () => ({
+    isUpdateAvailable: true,
+    updateInfo: { version: '2.0.0' },
+    downloadPromise: download.promise,
+  });
+  const warnings = [];
+  const manager = createInstalledManager(updater, {
+    logger: { warn: (message) => warnings.push(message) },
+  });
+  await manager.checkForUpdates();
+  const error = new Error('sha512 mismatch at private installer path');
+  // electron-updater both emits the error and rejects its separate download promise.
+  updater.emit('error', error);
+  download.reject(error);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(manager.getState().status, 'error');
+  assert.deepEqual(warnings, ['The downloaded update could not be verified.']);
+  manager.dispose();
+});

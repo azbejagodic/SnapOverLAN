@@ -315,7 +315,6 @@ const createServerManager = ({
       serverProcess.kill();
       exited = await waitForProcessExit(serverProcess, SERVER_FORCE_STOP_TIMEOUT_MS);
     }
-    if (ownedServerProcess === serverProcess) ownedServerProcess = null;
     if (!exited && (!serverProcess || serverProcess.exitCode === null)) {
       const error = serverProcess
         ? 'The owned server process did not stop cleanly.'
@@ -323,6 +322,7 @@ const createServerManager = ({
       setState('error', error);
       throw new Error(error);
     }
+    if (ownedServerProcess === serverProcess) ownedServerProcess = null;
     verifiedShutdownToken = '';
     serverLaunchMode = 'offline';
     setState('offline');

@@ -320,6 +320,11 @@ async function requestQuit({ installUpdate = false } = {}) {
         await stopServer();
       } catch (error) {
         console.error('Could not stop the SnapOverLAN server during quit:', error);
+        if (installUpdate) {
+          updateInstallRequested = false;
+          writeUpdaterDebugLog('cleanup-failed');
+          return false;
+        }
       }
     }
     desktopShell.destroyTray();

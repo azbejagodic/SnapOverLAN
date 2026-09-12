@@ -1,6 +1,5 @@
 import {
   app as electronApp,
-  autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
   dialog,
@@ -10,7 +9,7 @@ import {
   shell,
   Tray,
 } from 'electron';
-import { appendFileSync, mkdirSync, promises as fs } from 'fs';
+import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -52,34 +51,12 @@ let updateManager = null;
 let updateManagerInitialization = null;
 let removeUpdateStateListener = null;
 let updateDialogController = null;
-let updateInstallRequested = false;
 const settingsStore = createSettingsStore({
   getSettingsPath: () => path.join(electronApp.getPath('userData'), 'desktop-settings.json'),
 });
 
 const getStartupLogPath = () => path.join(electronApp.getPath('userData'), 'startup.log');
-const getUpdaterDebugLogPath = () => path.join(electronApp.getPath('userData'), 'updater-debug.log');
 
-// Temporary diagnostics for the installed Windows updater A -> B test.
-const writeUpdaterDebugLog = (event, details = {}) => {
-  try {
-    const logPath = getUpdaterDebugLogPath();
-    mkdirSync(path.dirname(logPath), { recursive: true });
-    appendFileSync(logPath, `${JSON.stringify({
-      time: new Date().toISOString(),
-      event,
-      ...details,
-    })}\n`);
-  } catch {}
-};
-
-writeUpdaterDebugLog('app-startup', {
-  version: electronApp.getVersion(),
-  packaged: electronApp.isPackaged,
-  receivedUpdated: process.argv.includes('--updated'),
-  pid: process.pid,
-  parentPid: process.ppid,
-});
 const getDesktopSettings = () => ({
   backgroundMode,
   autoCopyFirstPhoto,
@@ -133,11 +110,9 @@ const initializeUpdateManager = () => {
       logger: {
         info: (message) => {
           console.log('SnapOverLAN updater:', message);
-          writeUpdaterDebugLog('updater-info', { message });
         },
         warn: (message) => {
           console.warn('SnapOverLAN updater:', message);
-          writeUpdaterDebugLog('updater-warning', { message });
         },
       },
     });
@@ -306,9 +281,6 @@ async function requestQuit({ installUpdate = false } = {}) {
   }
   const operation = (async () => {
     if (installUpdate) {
-      updateInstallRequested = true;
-      writeUpdaterDebugLog('restart-and-update-requested');
-      writeUpdaterDebugLog('cleanup-started');
       console.log('SnapOverLAN updater: Update install requested; cleanup starting.');
     }
     const serverOperation = serverManager.getOperation();
@@ -321,8 +293,6 @@ async function requestQuit({ installUpdate = false } = {}) {
       } catch (error) {
         console.error('Could not stop the SnapOverLAN server during quit:', error);
         if (installUpdate) {
-          updateInstallRequested = false;
-          writeUpdaterDebugLog('cleanup-failed');
           return false;
         }
       }
@@ -330,14 +300,11 @@ async function requestQuit({ installUpdate = false } = {}) {
     desktopShell.destroyTray();
     allowQuit = true;
     if (installUpdate) {
-      writeUpdaterDebugLog('cleanup-completed');
       console.log('SnapOverLAN updater: Cleanup completed; handing off to quitAndInstall.');
       const installStarted = updateManager?.installDownloadedUpdate() === true;
       if (installStarted) return true;
 
       allowQuit = false;
-      updateInstallRequested = false;
-      writeUpdaterDebugLog('quit-and-install-rejected');
       console.error('SnapOverLAN updater: The downloaded update could not start installing.');
       return false;
     }
@@ -391,18 +358,12 @@ ipcMain.handle('image:copy', (event, imageBytes) => {
 });
 
 const gotLock = electronApp.requestSingleInstanceLock();
-writeUpdaterDebugLog('single-instance-lock', { acquired: gotLock });
 
 if (!gotLock) {
   electronApp.quit();
 } else {
   electronApp.on('second-instance', () => {
-    writeUpdaterDebugLog('second-instance-received');
     desktopShell.openMainWindow().catch((error) => console.error(error));
-  });
-
-  electronAutoUpdater.on('before-quit-for-update', () => {
-    writeUpdaterDebugLog('before-quit-for-update');
   });
 
   electronApp.whenReady().then(async () => {
@@ -427,10 +388,6 @@ if (!gotLock) {
   });
 
   electronApp.on('before-quit', (event) => {
-    writeUpdaterDebugLog('before-quit', {
-      allowQuit,
-      updateInstallRequested,
-    });
     if (allowQuit) {
       return;
     }
@@ -445,7 +402,6 @@ if (!gotLock) {
   });
 
   electronApp.on('will-quit', () => {
-    writeUpdaterDebugLog('will-quit', { updateInstallRequested });
     removeUpdateStateListener?.();
     removeUpdateStateListener = null;
     updateDialogController?.dispose();

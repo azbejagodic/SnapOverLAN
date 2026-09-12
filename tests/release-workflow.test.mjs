@@ -56,7 +56,7 @@ test('published release assets use exact dynamic filenames from one build', () =
   assert.match(workflow, /dist\/latest\.yml/);
   assert.match(
     workflow,
-    /dist\/SnapOverLAN-Setup-\$\{\{ steps\.versions\.outputs\.desktop_version \}\}-x64\.exe\n/,
+    /dist\/SnapOverLAN-Setup-\$\{\{ steps\.versions\.outputs\.desktop_version \}\}-x64\.exe\r?\n/,
   );
   assert.match(
     workflow,

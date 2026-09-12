@@ -86,9 +86,7 @@ const createQuitHarness = ({ stopServer, pendingOperation = null } = {}) => {
   const context = {
     quitOperation: null,
     allowQuit: false,
-    updateInstallRequested: false,
     console: { log() {}, error() {} },
-    writeUpdaterDebugLog() {},
     serverManager: { getOperation: () => pendingOperation, isRunning: () => true },
     stopServer: async () => { events.push('stop'); await stopServer?.(); },
     desktopShell: { destroyTray: () => events.push('tray') },
@@ -289,7 +287,6 @@ test('failed server cleanup blocks update installation and allows a later quit',
   assert.equal(await requestQuit({ installUpdate: true }), false);
   assert.deepEqual(events, ['stop']);
   assert.equal(context.allowQuit, false);
-  assert.equal(context.updateInstallRequested, false);
   assert.equal(context.quitOperation, null);
   failStop = false;
   assert.equal(await requestQuit(), true);
@@ -360,17 +357,6 @@ test('a failed forced stop retains the owned child so cleanup can be retried', a
   await manager.stop();
   assert.equal(killCalls, 2);
   assert.equal(manager.isRunning(), false);
-});
-
-test('temporary updater diagnostics capture restart handoff and earliest relaunched-app state', () => {
-  assert.match(mainSource, /getPath\('userData'\), 'updater-debug\.log'/);
-  assert.match(mainSource, /writeUpdaterDebugLog\('app-startup',[\s\S]*?electronApp\.getVersion\(\)[\s\S]*?receivedUpdated:[\s\S]*?process\.argv\.includes\('--updated'\)/);
-  assert.match(mainSource, /writeUpdaterDebugLog\('single-instance-lock', \{ acquired: gotLock \}\)/);
-  assert.match(mainSource, /electronAutoUpdater\.on\('before-quit-for-update',[\s\S]*?writeUpdaterDebugLog\('before-quit-for-update'\)/);
-  assert.match(requestQuitSource, /writeUpdaterDebugLog\('restart-and-update-requested'\)[\s\S]*?writeUpdaterDebugLog\('cleanup-started'\)[\s\S]*?await stopServer\(\)[\s\S]*?writeUpdaterDebugLog\('cleanup-completed'\)[\s\S]*?installDownloadedUpdate\(\)/);
-  assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?writeUpdaterDebugLog\('before-quit'/);
-  assert.match(mainSource, /electronApp\.on\('will-quit',[\s\S]*?writeUpdaterDebugLog\('will-quit'/);
-  assert.doesNotMatch(mainSource, /writeUpdaterDebugLog\([^\n]*process\.argv(?!\.includes)/);
 });
 
 test('unrelated processes are never killed; only verified SnapOverLAN servers receive shutdown', () => {

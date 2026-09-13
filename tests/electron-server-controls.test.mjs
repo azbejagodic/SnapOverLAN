@@ -217,10 +217,10 @@ test('tray Quit, before-quit, and repeated quits share one shutdown path', () =>
 test('updater initialization starts after the visible desktop is ready and cannot fail startup', () => {
   const readyStart = mainSource.indexOf("electronApp.whenReady().then(async () => {");
   const windowShown = mainSource.indexOf('desktopShell.showMainWindow();', readyStart);
-  const updaterStarted = mainSource.indexOf('void initializeUpdateManager();', windowShown);
+  const updaterStarted = mainSource.indexOf('void checkForUpdates();', windowShown);
   const fatalCatch = mainSource.indexOf("dialog.showErrorBox('SnapOverLAN could not start'", updaterStarted);
   const initializeStart = mainSource.indexOf('const initializeUpdateManager = () =>');
-  const checkStart = mainSource.indexOf('updateManager.checkForUpdates().catch', initializeStart);
+  const checkStart = mainSource.indexOf('await updateManager?.checkForUpdates();', initializeStart);
 
   assert.ok(readyStart >= 0);
   assert.ok(windowShown > readyStart);

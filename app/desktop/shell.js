@@ -15,6 +15,7 @@ const createDesktopShell = ({
   onBackgroundToggle,
   onQuit,
   onStateReady,
+  onUserOpen = () => {},
   port,
   preloadPath,
   rendererPath,
@@ -72,7 +73,7 @@ const createDesktopShell = ({
   const updateTrayMenu = () => {
     if (!tray || tray.isDestroyed()) return;
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: 'Open SnapOverLAN', click: () => openMainWindow() },
+      { label: 'Open SnapOverLAN', click: () => openMainWindow({ userInitiated: true }) },
       { type: 'separator' },
       {
         label: `Background Mode: ${getBackgroundMode() ? 'On' : 'Off'}`,
@@ -156,10 +157,13 @@ const createDesktopShell = ({
     });
   };
 
-  async function openMainWindow() {
-    if (showMainWindow()) return;
-    await createWindow();
-    showMainWindow();
+  async function openMainWindow({ userInitiated = false } = {}) {
+    if (!showMainWindow()) {
+      await createWindow();
+      showMainWindow();
+    }
+    // Internal server/settings changes can also reveal the window.
+    if (userInitiated) onUserOpen();
   }
 
   const createTray = () => {
@@ -169,7 +173,7 @@ const createDesktopShell = ({
     }
     tray = new Tray(trayIconPath);
     tray.setToolTip('SnapOverLAN');
-    tray.on('double-click', () => openMainWindow());
+    tray.on('double-click', () => openMainWindow({ userInitiated: true }));
     updateTrayMenu();
   };
 

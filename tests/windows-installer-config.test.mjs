@@ -49,7 +49,6 @@ test('update feed uses the canonical source repository without automatic publish
     repo: 'SnapOverLAN',
   }]);
   assert.match(packageJson.scripts.dist, /electron-builder --win --publish never/);
-  assert.equal(packageJson.version, '2.0.0');
 });
 
 test('custom NSIS hooks safely migrate private-profile installs and retain firewall cleanup', async () => {

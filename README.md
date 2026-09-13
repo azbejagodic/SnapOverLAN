@@ -29,7 +29,7 @@ The Express server is an internal part of the desktop app. A standalone server c
 - Windows x64 PC
 - Phone and PC on the same trusted/private local network
 - Chrome or Brave if using the extension
-- Node.js 22.12 or newer when running or building from source
+- Node.js 24.19 or newer when running or building from source
 
 The current end-user build target is Windows. Tagged releases are configured to provide the Windows Setup executable, portable executable, and browser-extension ZIP through [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases). If the available release does not yet include those assets, use the source or local-build instructions below.
 

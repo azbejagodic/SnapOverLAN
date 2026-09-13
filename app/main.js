@@ -135,13 +135,19 @@ const initializeUpdateManager = () => {
       void updateDialogController.handleState(state);
     });
     void updateDialogController.handleState(updateManager.getState());
-    updateManager.checkForUpdates().catch(() => {
-      console.warn('SnapOverLAN updater: An unexpected update check failure was contained.');
-    });
   })().catch(() => {
     console.warn('SnapOverLAN updater: Initialization failed without affecting application startup.');
   });
   return updateManagerInitialization;
+};
+
+const checkForUpdates = async () => {
+  try {
+    await initializeUpdateManager();
+    await updateManager?.checkForUpdates();
+  } catch {
+    console.warn('SnapOverLAN updater: An unexpected update check failure was contained.');
+  }
 };
 
 const handleServerStateChanged = (server) => {
@@ -211,6 +217,7 @@ desktopShell = createDesktopShell({
   onBackgroundToggle: (enabled) => setBackgroundMode(enabled).catch((error) => console.error(error)),
   onQuit: () => requestQuit(),
   onStateReady: sendDesktopState,
+  onUserOpen: () => { void checkForUpdates(); },
   port: PORT,
   preloadPath,
   rendererPath,
@@ -371,7 +378,9 @@ if (!gotLock) {
   electronApp.quit();
 } else {
   electronApp.on('second-instance', () => {
-    desktopShell.openMainWindow().catch((error) => console.error(error));
+    electronApp.whenReady()
+      .then(() => desktopShell.openMainWindow({ userInitiated: true }))
+      .catch((error) => console.error(error));
   });
 
   electronApp.whenReady().then(async () => {
@@ -384,7 +393,7 @@ if (!gotLock) {
       desktopShell.createTray();
     }
     desktopShell.showMainWindow();
-    void initializeUpdateManager();
+    void checkForUpdates();
   }).catch((error) => {
     dialog.showErrorBox('SnapOverLAN could not start', error.message || String(error));
     allowQuit = true;
@@ -392,7 +401,7 @@ if (!gotLock) {
   });
 
   electronApp.on('activate', () => {
-    desktopShell.openMainWindow().catch((error) => console.error(error));
+    desktopShell.openMainWindow({ userInitiated: true }).catch((error) => console.error(error));
   });
 
   electronApp.on('before-quit', (event) => {

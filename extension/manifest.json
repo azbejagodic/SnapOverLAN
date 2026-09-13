@@ -22,18 +22,10 @@
     }
   },
   "permissions": [
-    "storage",
     "clipboardWrite"
   ],
   "host_permissions": [
     "http://localhost:8787/*",
     "http://127.0.0.1:8787/*"
-  ],
-  "optional_permissions": [
-    "clipboardRead"
-  ],
-  "optional_host_permissions": [
-    "http://*/*",
-    "https://*/*"
   ]
 }

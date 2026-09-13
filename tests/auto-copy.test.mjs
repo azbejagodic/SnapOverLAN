@@ -8,6 +8,7 @@ import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import sharp from 'sharp';
+import { imageFixture } from './helpers/image-fixtures.mjs';
 
 const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'snapoverlan-auto-copy-'));
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -86,7 +87,7 @@ after(async () => {
 const uploadFiles = async (files) => {
   const form = new FormData();
   for (const file of files) {
-    form.append('photos', new Blob([file.contents || file.name], { type: file.type }), file.name);
+    form.append('photos', new Blob([file.contents ?? await imageFixture(file.type)], { type: file.type }), file.name);
   }
   const response = await fetch(`http://127.0.0.1:${port}/api/upload`, {
     method: 'POST',

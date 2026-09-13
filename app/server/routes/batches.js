@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { createZipBuffer, formatBatchZipName } from '../archive.js';
+import { sendStoredFile } from './stored-file-response.js';
 import {
   clearAllBatches,
   deleteBatch,
@@ -33,6 +34,7 @@ const createBatchesRouter = () => {
       const zipBuffer = await createZipBuffer(files);
       const zipName = formatBatchZipName(currentBatch?.createdAt);
       res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
       res.setHeader('Content-Length', String(zipBuffer.length));
       res.send(zipBuffer);
@@ -46,8 +48,7 @@ const createBatchesRouter = () => {
   });
   router.get('/batches/:id/files/:name', async (req, res) => {
     try {
-      res.setHeader('Cache-Control', 'no-store');
-      res.sendFile(await getBatchFilePathById(req.params.id, req.params.name));
+      sendStoredFile(res, await getBatchFilePathById(req.params.id, req.params.name));
     } catch (err) { sendStorageError(res, err); }
   });
   router.post('/batches/:id/select', async (req, res) => {

@@ -29,11 +29,21 @@ const readCentralDirectoryNames = (archive) => {
   return names;
 };
 
+test('extension has only clipboard writing and explicit loopback host permissions', async () => {
+  const manifest = JSON.parse(await fs.readFile(path.join(extensionDir, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.manifest_version, 3);
+  assert.deepEqual(manifest.permissions, ['clipboardWrite']);
+  assert.deepEqual(manifest.host_permissions, ['http://localhost:8787/*', 'http://127.0.0.1:8787/*']);
+  assert.deepEqual(manifest.optional_permissions || [], []);
+  assert.deepEqual(manifest.optional_host_permissions || [], []);
+});
+
 test('extension popup has no obsolete format-specific filtering', async () => {
   const popupSource = await fs.readFile(path.join(extensionDir, 'popup.js'), 'utf8');
   assert.doesNotMatch(popupSource, /isVideoFile|getImageFiles|\.(?:mp4|mov|webm)/i);
   assert.match(popupSource, /const files = await loadLatest\(origin\)/);
   assert.match(popupSource, /for \(const file of files\)/);
+  assert.match(popupSource, /img\.crossOrigin = 'anonymous';\s*img\.src = imageUrl/);
 });
 
 test('extension package is versioned from its manifest and keeps manifest.json at the root', async (t) => {

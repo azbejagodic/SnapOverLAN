@@ -14,6 +14,7 @@ const copyImageBytes = (imageBytes) => {
 };
 
 contextBridge.exposeInMainWorld('snapOverLAN', Object.freeze({
+  serverRequest: (resourcePath, method = 'GET') => ipcRenderer.invoke('server:request', resourcePath, method),
   getServerState: () => ipcRenderer.invoke('server:get-state'),
   retryServer: () => ipcRenderer.invoke('server:retry'),
   getBackgroundMode: () => ipcRenderer.invoke('background:get'),

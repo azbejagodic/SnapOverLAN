@@ -6,6 +6,7 @@ import {
   isAllowedImageMimeType,
   upload,
   uploadErrorHandler,
+  validateUploadedFiles,
 } from '../storage.js';
 
 const uploadStatus = {
@@ -55,7 +56,7 @@ const createUploadCompletedEvent = (req) => {
 const createUploadsRouter = ({ onUploadCompleted = () => {} } = {}) => {
   const router = Router();
 
-  router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), uploadErrorHandler, async (req, res, next) => {
+  router.post('/upload', markUploadStarted, upload.array('photos', MAX_FILES), uploadErrorHandler, validateUploadedFiles, async (req, res, next) => {
     try {
       const files = await finalizeUploadedBatch(req);
       console.info('[auto-copy] upload completed', {

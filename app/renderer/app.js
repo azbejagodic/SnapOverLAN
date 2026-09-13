@@ -1,5 +1,5 @@
 import { drawQrCode } from './qr-code.js';
-import { fetchJson, serverUrl } from './server-api.js';
+import { fetchJson } from './server-api.js';
 import { createBatchHistory } from './batch-history.js';
 
 const refreshBtn = document.getElementById('refreshBtn');
@@ -294,9 +294,7 @@ function closeQrModal() {
 
 async function loadPhoneSetup() {
   try {
-    const response = await fetch(serverUrl('/api/phone-url'));
-    if (!response.ok) throw new Error(`Phone URL request failed (${response.status})`);
-    const data = await response.json();
+    const data = await fetchJson('/api/phone-url');
     renderPhoneSetup(data);
     return data;
   } catch (error) {
@@ -312,9 +310,7 @@ async function loadPhoneSetup() {
 async function loadServerStatus({ showActivity = false } = {}) {
   if (showActivity) renderStatus({ state: 'checking' });
   try {
-    const response = await fetch(serverUrl('/api/server-status'));
-    if (!response.ok) throw new Error(`Server status request failed (${response.status})`);
-    const status = await response.json();
+    const status = await fetchJson('/api/server-status');
     const currentSnapOverLAN = status.status === 'listening'
       && status.application === 'SnapOverLAN'
       && status.protocolVersion === 1;

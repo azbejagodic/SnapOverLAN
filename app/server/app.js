@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import cors from 'cors';
 import express from 'express';
-import { createLanAccessPolicy } from './access-policy.js';
+import { createLanAccessPolicy, isExtensionOrigin } from './access-policy.js';
 import { PWA_DIR } from './config.js';
 import { createApiRouter } from './routes/api.js';
 import { createFilesRouter } from './routes/files.js';
@@ -17,7 +17,7 @@ const createServerApp = ({
 }) => {
   const app = express();
   const loopbackCors = cors({
-    origin: true,
+    origin: (origin, callback) => callback(null, isExtensionOrigin(origin)),
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
   });
 

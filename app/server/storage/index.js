@@ -28,5 +28,6 @@ export {
   isAllowedImageMimeType,
   upload,
   uploadErrorHandler,
+  validateUploadedFiles,
 } from './uploads.js';
 export { ensureStorageDirectories };

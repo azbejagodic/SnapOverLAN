@@ -22,6 +22,7 @@ import { createSettingsStore } from './desktop/settings-store.js';
 import { createAutoCopyController } from './desktop/auto-copy-controller.js';
 import { downloadBatchToFolder } from './desktop/batch-download.js';
 import { createDesktopShell } from './desktop/shell.js';
+import { createRendererServerClient } from './desktop/renderer-server-client.js';
 import { createUpdateDialogController } from './desktop/update-dialog-controller.js';
 import { createElectronUpdateManager } from './desktop/update-manager.js';
 
@@ -36,6 +37,7 @@ const trayIconPath = path.join(projectRoot, 'assets', 'electron', 'tray-24.png')
 
 const PORT = 8787;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
+const rendererServerRequest = createRendererServerClient({ serverOrigin: SERVER_ORIGIN });
 electronApp.setName('SnapOverLAN');
 
 let serverState = 'offline';
@@ -328,6 +330,12 @@ const handleServerControl = async (operation) => {
 };
 
 ipcMain.handle('server:get-state', () => getServerStatePayload());
+ipcMain.handle('server:request', (event, resourcePath, method) => {
+  if (!desktopShell.isMainWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error('Server request was rejected.');
+  }
+  return rendererServerRequest(resourcePath, method);
+});
 ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
 ipcMain.handle('background:get', () => backgroundMode);
 ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));

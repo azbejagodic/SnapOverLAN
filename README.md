@@ -147,6 +147,10 @@ SnapOverLAN is designed for a trusted private network. It does not provide accou
 
 Non-loopback clients are intentionally limited to the phone interface and its static assets plus `POST /api/upload`. Saved batches, stored-file reads, storage settings, diagnostics, Auto-copy, and server-control operations return `404` to LAN clients and remain available only through loopback (`localhost`/`127.0.0.1`) for the desktop app and extension.
 
+Loopback management also rejects ordinary cross-site web Origins, opaque (`null`) Origins, and non-loopback Host names. The desktop renderer uses native IPC; installed Chrome/Brave extension Origins are allowed independently of their installation ID. Native clients without browser Origin headers and same-origin localhost requests remain supported. This boundary trusts local software and installed extensions with localhost access.
+
+Uploads are decoded before a batch becomes available, and stored extensions come from the verified image format. Validation allows up to 60 megapixels per file (including all image frames), accommodating 48/50 MP phone photos; the separate clipboard limit remains 40 megapixels. HEIC/HEIF validation uses a bundled local HEVC decoder because Sharp's prebuilt binaries omit that codec. Invalid batches are removed, and stored-file responses use safe image types and `nosniff`.
+
 ## Windows Firewall and troubleshooting
 
 The Setup installer creates two inbound Windows Firewall rules on the Private profile:

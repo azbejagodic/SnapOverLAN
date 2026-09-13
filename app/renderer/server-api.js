@@ -4,6 +4,9 @@ const DEFAULT_TIMEOUT_MS = 10000;
 const serverUrl = (resourcePath) => new URL(resourcePath, SERVER_ORIGIN).toString();
 
 const fetchJson = async (resourcePath, options = {}) => {
+  if (window.snapOverLAN?.serverRequest) {
+    return window.snapOverLAN.serverRequest(resourcePath, options.method || 'GET');
+  }
   const response = await fetch(serverUrl(resourcePath), options);
   if (!response.ok) {
     let message = `Request failed (${response.status})`;

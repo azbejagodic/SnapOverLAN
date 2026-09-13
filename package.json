@@ -29,12 +29,18 @@
     "cors": "^2.8.5",
     "electron-updater": "^6.8.9",
     "express": "^4.21.2",
-    "multer": "^1.4.5-lts.1",
-    "sharp": "^0.34.5"
+    "libheif-js": "^1.23.2",
+    "multer": "^2.3.0",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "electron": "^31.7.7",
     "electron-builder": "^26.15.3"
+  },
+  "overrides": {
+    "express": {
+      "qs": "^6.16.0"
+    }
   },
   "build": {
     "appId": "local.snapoverlan.app",

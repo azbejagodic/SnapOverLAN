@@ -1,3 +1,8 @@
+const isSafeExternalUrl = (targetUrl) => {
+  try { return ['http:', 'https:'].includes(new URL(targetUrl).protocol); }
+  catch { return false; }
+};
+
 const createDesktopShell = ({
   BrowserWindow,
   Menu,
@@ -22,11 +27,28 @@ const createDesktopShell = ({
   const isLocalAppUrl = (targetUrl) => {
     try {
       const parsed = new URL(targetUrl);
-      return ['127.0.0.1', 'localhost'].includes(parsed.hostname)
+      return parsed.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(parsed.hostname)
         && parsed.port === String(port);
     } catch {
       return false;
     }
+  };
+
+  const openExternal = (url) => {
+    if (isSafeExternalUrl(url)) {
+      Promise.resolve(shell.openExternal(url)).catch((error) => console.warn('Could not open URL:', error));
+    }
+  };
+
+  const protectNavigation = (webContents, { local = false } = {}) => {
+    const onNavigate = (event, url) => {
+      if (local && isLocalAppUrl(url)) return;
+      event.preventDefault();
+      openExternal(url);
+    };
+    webContents.on('will-navigate', onNavigate);
+    webContents.on('will-redirect', onNavigate);
+    webContents.on('will-attach-webview', (event) => event.preventDefault());
   };
 
   const send = (channel, payload) => {
@@ -88,6 +110,14 @@ const createDesktopShell = ({
       },
     });
     mainWindow.setMenuBarVisibility(false);
+    protectNavigation(mainWindow.webContents);
+    mainWindow.webContents.on('did-create-window', (child) => {
+      protectNavigation(child.webContents, { local: true });
+      child.webContents.setWindowOpenHandler(({ url }) => {
+        openExternal(url);
+        return { action: 'deny' };
+      });
+    });
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (isLocalAppUrl(url)) {
         return {
@@ -107,7 +137,7 @@ const createDesktopShell = ({
           },
         };
       }
-      shell.openExternal(url);
+      openExternal(url);
       return { action: 'deny' };
     });
     mainWindow.on('close', (event) => {
@@ -163,4 +193,4 @@ const createDesktopShell = ({
   };
 };
 
-export { createDesktopShell };
+export { createDesktopShell, isSafeExternalUrl };

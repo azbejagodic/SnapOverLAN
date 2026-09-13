@@ -218,6 +218,8 @@ function makeCard(origin, file) {
   thumbWrap.className = 'thumb-wrap';
 
   const img = document.createElement('img');
+  // Send the extension Origin for thumbnails as well as API fetches.
+  img.crossOrigin = 'anonymous';
   img.src = imageUrl;
   img.alt = file?.name || 'image';
   img.loading = 'lazy';

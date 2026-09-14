@@ -170,7 +170,7 @@ test('a hidden main window uses a non-modal update window without showing the ap
   await prompt;
 });
 
-test('duplicate downloaded states share one prompt and one session decision', async () => {
+test('fresh downloads prompt once and repeated state events stay dismissed after Later', async () => {
   let installCalls = 0;
   const { controller } = createController({
     requestInstall: async () => { installCalls += 1; return true; },
@@ -184,10 +184,50 @@ test('duplicate downloaded states share one prompt and one session decision', as
   assert.equal(FakeBrowserWindow.instances.length, 1);
   choose(window, 'later');
   await firstPrompt;
+  assert.equal(window.isDestroyed(), true);
   await controller.handleState(downloadedState());
 
   assert.equal(FakeBrowserWindow.instances.length, 1);
   assert.equal(installCalls, 0);
+});
+
+for (const dismissal of ['later', 'close']) {
+  test(`${dismissal} allows the same downloaded version on a future explicit open`, async () => {
+    let installCalls = 0;
+    const { controller } = createController({
+      requestInstall: async () => { installCalls += 1; return true; },
+    });
+    const first = controller.handleState(downloadedState());
+    const window = await waitForWindow();
+    if (dismissal === 'close') window.close();
+    else choose(window, 'later');
+    assert.equal(await first, false);
+    assert.equal(window.isDestroyed(), true);
+    await controller.handleState(downloadedState());
+    assert.equal(FakeBrowserWindow.instances.length, 1);
+
+    const reopened = controller.handleUserOpen(downloadedState());
+    assert.equal(controller.handleUserOpen(downloadedState()), reopened);
+    assert.equal(controller.handleState(downloadedState()), reopened);
+    const nextWindow = await waitForWindow(1);
+    assert.equal(FakeBrowserWindow.instances.length, 2);
+    choose(nextWindow, 'later');
+    assert.equal(await reopened, false);
+    await controller.handleState(downloadedState());
+    assert.equal(FakeBrowserWindow.instances.length, 2);
+    assert.equal(installCalls, 0);
+  });
+}
+
+test('active prompts block concurrent user opens and state events for any version', async () => {
+  const { controller } = createController();
+  const prompt = controller.handleUserOpen(downloadedState());
+  assert.equal(controller.handleUserOpen(downloadedState('2.0.2')), prompt);
+  assert.equal(controller.handleState(downloadedState('2.0.2')), prompt);
+  const window = await waitForWindow();
+  assert.equal(FakeBrowserWindow.instances.length, 1);
+  choose(window, 'later');
+  await prompt;
 });
 
 test('Later and closing the window do not request installation', async () => {
@@ -219,6 +259,7 @@ test('Restart & Update requests the existing installation path only once', async
   assert.equal(await prompt, true);
   choose(window, 'restart');
   await controller.handleState(downloadedState());
+  await controller.handleUserOpen(downloadedState());
   assert.equal(installCalls, 1);
   assert.equal(FakeBrowserWindow.instances.length, 1);
 });
@@ -250,6 +291,8 @@ test('ordinary checking, updater errors, and unsafe versions never create a wind
     message: 'Could not reach the update service.',
   });
   await controller.handleState(downloadedState('<script>'));
+  await controller.handleUserOpen({ status: 'downloading', version: '2.0.1' });
+  await controller.handleUserOpen(downloadedState('<script>'));
 
   assert.equal(FakeBrowserWindow.instances.length, 0);
 });

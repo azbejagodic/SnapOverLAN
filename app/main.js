@@ -141,9 +141,14 @@ const initializeUpdateManager = () => {
   return updateManagerInitialization;
 };
 
-const checkForUpdates = async () => {
+const checkForUpdates = async ({ userInitiated = false } = {}) => {
   try {
     await initializeUpdateManager();
+    // Inspect readiness before checking: a fresh download uses the state listener,
+    // and dismissing it must not trigger a second prompt when the check completes.
+    if (userInitiated && updateManager) {
+      void updateDialogController?.handleUserOpen(updateManager.getState());
+    }
     await updateManager?.checkForUpdates();
   } catch {
     console.warn('SnapOverLAN updater: An unexpected update check failure was contained.');
@@ -217,7 +222,7 @@ desktopShell = createDesktopShell({
   onBackgroundToggle: (enabled) => setBackgroundMode(enabled).catch((error) => console.error(error)),
   onQuit: () => requestQuit(),
   onStateReady: sendDesktopState,
-  onUserOpen: () => { void checkForUpdates(); },
+  onUserOpen: () => { void checkForUpdates({ userInitiated: true }); },
   port: PORT,
   preloadPath,
   rendererPath,

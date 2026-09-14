@@ -59,6 +59,7 @@ const createUpdateDialogController = ({
   const promptedVersions = new Set();
   let activePrompt = null;
   let activeWindow = null;
+  let installStarted = false;
   let disposed = false;
 
   const warn = (message) => {
@@ -140,15 +141,17 @@ const createUpdateDialogController = ({
     }
   });
 
-  const handleState = (state) => {
+  const promptDownloadedUpdate = (state, { userInitiated = false } = {}) => {
     const version = typeof state?.version === 'string' && VERSION_PATTERN.test(state.version)
       ? state.version
       : '';
     if (
       disposed
+      || installStarted
+      || activePrompt
       || state?.status !== 'downloaded'
       || !version
-      || promptedVersions.has(version)
+      || (!userInitiated && promptedVersions.has(version))
     ) {
       return activePrompt || Promise.resolve(false);
     }
@@ -159,7 +162,6 @@ const createUpdateDialogController = ({
       .then(async (result) => {
         if (result?.response !== 1) return false;
 
-        let installStarted = false;
         try {
           installStarted = await requestInstall?.() === true;
         } catch {
@@ -185,7 +187,9 @@ const createUpdateDialogController = ({
       if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy();
       activeWindow = null;
     },
-    handleState,
+    // State events prompt once per version; only an explicit open may re-present it.
+    handleState: (state) => promptDownloadedUpdate(state),
+    handleUserOpen: (state) => promptDownloadedUpdate(state, { userInitiated: true }),
   });
 };
 

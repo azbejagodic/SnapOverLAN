@@ -8,6 +8,10 @@ import { runInNewContext } from 'node:vm';
 import { normalizeDesktopSettings, updateDesktopSetting } from '../app/desktop-settings.js';
 import { createDesktopShell } from '../app/desktop/shell.js';
 import { createUpdateManager } from '../app/desktop/update-manager.js';
+import {
+  createUpdateDialogController,
+  UPDATE_DIALOG_ACTION_CHANNEL,
+} from '../app/desktop/update-dialog-controller.js';
 
 const mainModuleUrl = new URL('../app/main.js', import.meta.url).href;
 const mainSource = await readFile(new URL(mainModuleUrl), 'utf8');
@@ -39,8 +43,9 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
   let checkImplementation = async () => ({ isUpdateAvailable: false });
 
   class FakeWindow extends EventEmitter {
-    constructor() {
+    constructor(options) {
       super();
+      this.options = options;
       this.visible = false;
       this.destroyed = false;
       this.webContents = new EventEmitter();
@@ -49,12 +54,16 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
       windows.push(this);
     }
     isDestroyed() { return this.destroyed; }
+    isVisible() { return this.visible; }
     isMinimized() { return false; }
     show() { this.visible = true; }
     hide() { this.visible = false; }
     focus() {}
     setMenuBarVisibility() {}
-    async loadFile() { this.webContents.emit('did-finish-load'); }
+    async loadFile() {
+      this.webContents.emit('did-finish-load');
+      queueMicrotask(() => this.emit('ready-to-show'));
+    }
     close() {
       let prevented = false;
       this.emit('close', { preventDefault: () => { prevented = true; } });
@@ -126,12 +135,22 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
       if (initializationError) throw initializationError;
       return manager;
     },
-    createUpdateDialogController: () => ({
-      handleState: async (next) => { dialogStates.push(next); }, dispose() {},
-    }),
+    createUpdateDialogController: (options) => {
+      const controller = createUpdateDialogController(options);
+      return {
+        ...controller,
+        handleState: (next) => {
+          dialogStates.push(next);
+          return controller.handleState(next);
+        },
+      };
+    },
   });
   return {
     desktop, electronApp, updater, manager, windows, trays, errors, warnings, dialogStates,
+    get updateWindows() {
+      return windows.filter((window) => window.options.title === 'SnapOverLAN Update');
+    },
     ready: async () => { ready.resolve(); await flush(); },
     get checkCalls() { return checkCalls; },
     get maxActiveChecks() { return maxActiveChecks; },
@@ -244,6 +263,10 @@ test('a second instance arriving before Electron readiness safely initializes th
 test('renderer loads, server changes, background toggles, and internal tray updates never check', async () => {
   const app = createHarness();
   await app.ready();
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  app.updateWindows[0].webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
+  await flush();
   app.windows[0].close();
   app.windows[0].webContents.emit('did-finish-load');
   app.desktop.updateTrayMenu();
@@ -258,6 +281,89 @@ test('renderer loads, server changes, background toggles, and internal tray upda
   await flush();
   assert.equal(app.windows[0].visible, true);
   assert.equal(app.checkCalls, 1);
+  assert.equal(app.updateWindows.length, 1);
+  assert.equal(app.updateWindows[0].isDestroyed(), true);
+  assert.deepEqual(app.errors, []);
+});
+
+for (const dismissal of ['later', 'close']) {
+  test(`downloaded update dismissed with ${dismissal} reappears through every explicit open path`, async () => {
+    const app = createHarness();
+    await app.ready();
+    app.updater.emit('update-downloaded', { version: '9.0.0' });
+    await flush();
+    assert.equal(app.updateWindows.length, 1);
+    const reopenActions = [
+      () => app.electronApp.emit('second-instance'),
+      () => app.trays[0].menu.find((item) => item.label === 'Open SnapOverLAN').click(),
+      () => app.trays[0].emit('double-click'),
+      () => app.electronApp.emit('activate'),
+    ];
+    for (const [index, reopen] of reopenActions.entries()) {
+      const popup = app.updateWindows.at(-1);
+      assert.equal(popup.isVisible(), true);
+      if (dismissal === 'close') popup.close();
+      else popup.webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
+      await flush();
+      assert.equal(popup.isDestroyed(), true);
+      app.updater.emit('update-downloaded', { version: '9.0.0' });
+      await flush();
+      assert.equal(app.updateWindows.length, index + 1);
+      app.desktop.getMainWindow().close();
+      assert.equal(app.desktop.getMainWindow().isVisible(), false);
+      reopen();
+      await flush();
+      assert.equal(app.desktop.getMainWindow().isVisible(), true);
+      assert.equal(app.updateWindows.length, index + 2);
+      assert.equal(app.updateWindows.at(-1).options.parent, app.desktop.getMainWindow());
+      assert.equal(app.updateWindows.filter((window) => !window.isDestroyed()).length, 1);
+      assert.equal(app.checkCalls, 1);
+    }
+    app.updateWindows.at(-1).close();
+    await flush();
+    assert.deepEqual(app.errors, []);
+    assert.deepEqual(app.warnings, []);
+  });
+}
+
+test('simultaneous shortcut, tray, and activation opens share one downloaded-update dialog', async () => {
+  const app = createHarness();
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  app.updateWindows[0].close();
+  await flush();
+  app.desktop.getMainWindow().close();
+  app.electronApp.emit('second-instance');
+  app.trays[0].emit('double-click');
+  app.electronApp.emit('activate');
+  await flush();
+  assert.equal(app.updateWindows.length, 2);
+  assert.equal(app.updateWindows.filter((window) => !window.isDestroyed()).length, 1);
+  app.updateWindows[1].close();
+  await flush();
+  assert.equal(app.updateWindows.length, 2);
+  assert.equal(app.checkCalls, 1);
+  assert.deepEqual(app.errors, []);
+});
+
+test('a check finishing after a fresh download was dismissed does not re-prompt', async () => {
+  const app = createHarness();
+  await app.ready();
+  const pending = deferred();
+  app.setCheck(() => pending.promise);
+  app.electronApp.emit('second-instance');
+  await flush();
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  app.updateWindows[0].webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
+  await flush();
+  pending.resolve({ isUpdateAvailable: true });
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  assert.equal(app.updateWindows[0].isDestroyed(), true);
+  assert.equal(app.manager.getState().status, 'downloaded');
   assert.deepEqual(app.errors, []);
 });
 

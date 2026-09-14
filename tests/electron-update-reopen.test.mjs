@@ -26,8 +26,40 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-const createHarness = ({ initialization = Promise.resolve(), initializationError = null } = {}) => {
+const createClock = () => {
+  let now = 0;
+  const timers = new Set();
+  const scheduled = [];
+  return {
+    timers,
+    scheduled,
+    setInterval: (callback, interval) => {
+      const timer = { callback, interval, due: now + interval, unref() {} };
+      timers.add(timer);
+      scheduled.push(timer);
+      return timer;
+    },
+    clearInterval: (timer) => { timers.delete(timer); },
+    advance: async (milliseconds) => {
+      const target = now + milliseconds;
+      while (timers.size) {
+        const next = [...timers].sort((a, b) => a.due - b.due)[0];
+        if (next.due > target) break;
+        now = next.due;
+        next.due += next.interval;
+        next.callback();
+        await flush();
+      }
+      now = target;
+    },
+  };
+};
+
+const createHarness = ({
+  initialization = Promise.resolve(), initializationError = null, isPackaged = true,
+} = {}) => {
   const ready = deferred();
+  const clock = createClock();
   const windows = [];
   const trays = [];
   const errors = [];
@@ -90,7 +122,7 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
     finally { activeChecks -= 1; }
   };
   const manager = createUpdateManager({
-    isPackaged: true, platform: 'win32', env: {}, updater,
+    isPackaged, platform: 'win32', env: {}, updater,
     logger: { info() {}, warn() {} },
   });
   const electronApp = new EventEmitter();
@@ -107,6 +139,7 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
   };
   const desktop = runInNewContext(`${executableMain}\ndesktopShell`, {
     mainModuleUrl, path, fileURLToPath, process: { platform: 'win32' },
+    setInterval: clock.setInterval, clearInterval: clock.clearInterval,
     console: {
       log() {}, warn: (...args) => warnings.push(args), error: (...args) => errors.push(args),
     },
@@ -148,6 +181,7 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
   });
   return {
     desktop, electronApp, updater, manager, windows, trays, errors, warnings, dialogStates,
+    clock,
     get updateWindows() {
       return windows.filter((window) => window.options.title === 'SnapOverLAN Update');
     },
@@ -169,6 +203,7 @@ const createHarness = ({ initialization = Promise.resolve(), initializationError
 
 test('startup checks once and a second-instance shortcut reopen checks again', async () => {
   const app = createHarness();
+  assert.equal(app.clock.timers.size, 0);
   await app.ready();
   assert.equal(app.checkCalls, 1);
   assert.equal(app.initializationCalls, 1);
@@ -185,6 +220,7 @@ test('startup checks once and a second-instance shortcut reopen checks again', a
   assert.equal(app.checkCalls, 2);
   assert.equal(app.initializationCalls, 1);
   assert.deepEqual(app.errors, []);
+  assert.equal(app.clock.scheduled.length, 1);
 });
 
 test('tray menu, tray double-click, activation, and explicit window creation check for updates', async () => {
@@ -209,6 +245,7 @@ test('tray menu, tray double-click, activation, and explicit window creation che
   assert.equal(app.windows.length, 2);
   assert.equal(app.windows[1].visible, true);
   assert.equal(app.checkCalls, 5);
+  assert.equal(app.clock.scheduled.length, 1);
   assert.deepEqual(app.errors, []);
 });
 
@@ -240,10 +277,12 @@ test('reopens wait for pending updater initialization and share the startup chec
   await flush();
   assert.equal(app.initializationCalls, 1);
   assert.equal(app.checkCalls, 0);
+  assert.equal(app.clock.timers.size, 0);
   initialization.resolve();
   await flush();
   assert.equal(app.checkCalls, 1);
   assert.equal(app.maxActiveChecks, 1);
+  assert.equal(app.clock.scheduled.length, 1);
   assert.deepEqual(app.errors, []);
 });
 
@@ -283,6 +322,7 @@ test('renderer loads, server changes, background toggles, and internal tray upda
   assert.equal(app.checkCalls, 1);
   assert.equal(app.updateWindows.length, 1);
   assert.equal(app.updateWindows[0].isDestroyed(), true);
+  assert.equal(app.clock.scheduled.length, 1);
   assert.deepEqual(app.errors, []);
 });
 
@@ -411,4 +451,145 @@ test('updates found on reopen retain auto-download and forward readiness to the 
   assert.equal(app.manager.isInstallationReady(), true);
   assert.equal(app.dialogStates.at(-1).status, 'downloaded');
   assert.equal(app.dialogStates.at(-1).version, '9.0.0');
+});
+
+test('periodic checks start at 12 hours and continue at subsequent intervals in background mode', async () => {
+  const app = createHarness();
+  await app.ready();
+  assert.equal(app.checkCalls, 1);
+  assert.equal(app.clock.scheduled.length, 1);
+  const { interval } = app.clock.scheduled[0];
+  assert.equal(interval, 43_200_000);
+  app.desktop.getMainWindow().close();
+  await app.clock.advance(interval - 1);
+  assert.equal(app.checkCalls, 1);
+  await app.clock.advance(1);
+  assert.equal(app.checkCalls, 2);
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 3);
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 4);
+  assert.equal(app.desktop.getMainWindow().isVisible(), false);
+  assert.equal(app.clock.scheduled.length, 1);
+  assert.deepEqual(app.errors, []);
+});
+
+test('periodic ticks share pending startup and reopen checks without overlap', async () => {
+  const app = createHarness();
+  const startup = deferred();
+  app.setCheck(() => startup.promise);
+  await app.ready();
+  const { interval } = app.clock.scheduled[0];
+  await app.clock.advance(interval * 2);
+  app.electronApp.emit('second-instance');
+  await flush();
+  assert.equal(app.checkCalls, 1);
+  startup.resolve({ isUpdateAvailable: false });
+  await flush();
+
+  const periodic = deferred();
+  app.setCheck(() => periodic.promise);
+  await app.clock.advance(interval);
+  app.trays[0].emit('double-click');
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 2);
+  assert.equal(app.maxActiveChecks, 1);
+  periodic.resolve({ isUpdateAvailable: false });
+  await flush();
+  app.setCheck(async () => ({ isUpdateAvailable: false }));
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 3);
+  assert.equal(app.clock.scheduled.length, 1);
+});
+
+test('a failed periodic check is contained and later intervals still check', async () => {
+  const app = createHarness();
+  await app.ready();
+  const { interval } = app.clock.scheduled[0];
+  app.setCheck(async () => { throw new Error('network unavailable'); });
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 2);
+  assert.equal(app.manager.getState().status, 'error');
+  app.setCheck(async () => ({ isUpdateAvailable: false }));
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 3);
+  assert.equal(app.manager.getState().status, 'not-available');
+  assert.equal(app.clock.timers.size, 1);
+  assert.deepEqual(app.errors, []);
+});
+
+test('periodic downloads prompt normally but ticks preserve downloads and Later dismissal', async () => {
+  const app = createHarness();
+  await app.ready();
+  const { interval } = app.clock.scheduled[0];
+  app.setCheck(async () => ({ isUpdateAvailable: true, updateInfo: { version: '9.0.0' } }));
+  await app.clock.advance(interval);
+  assert.equal(app.checkCalls, 2);
+  assert.equal(app.updater.autoDownload, true);
+  app.updater.emit('download-progress', { percent: 50 });
+  const downloading = app.manager.getState();
+  await app.clock.advance(interval * 2);
+  assert.equal(app.manager.getState(), downloading);
+  assert.equal(app.checkCalls, 2);
+  assert.equal(app.updateWindows.length, 0);
+
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  const downloaded = app.manager.getState();
+  app.updateWindows[0].webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
+  await flush();
+  await app.clock.advance(interval * 2);
+  assert.equal(app.manager.getState(), downloaded);
+  assert.equal(app.checkCalls, 2);
+  assert.equal(app.updateWindows.length, 1);
+  assert.equal(app.updateWindows[0].isDestroyed(), true);
+
+  app.desktop.getMainWindow().close();
+  app.electronApp.emit('second-instance');
+  await flush();
+  assert.equal(app.updateWindows.length, 2);
+  assert.equal(app.updateWindows[1].isVisible(), true);
+  app.updateWindows[1].close();
+  await flush();
+});
+
+test('quitting clears the periodic timer and queued ticks cannot restart checks', async () => {
+  const app = createHarness();
+  await app.ready();
+  const timer = app.clock.scheduled[0];
+  // Queue a callback immediately before disposal as well as after it.
+  timer.callback();
+  app.electronApp.emit('will-quit');
+  await flush();
+  assert.equal(app.clock.timers.size, 0);
+  assert.equal(app.manager.isEnabled(), false);
+  timer.callback();
+  await app.clock.advance(timer.interval * 2);
+  await flush();
+  assert.equal(app.checkCalls, 1);
+  assert.equal(app.clock.scheduled.length, 1);
+});
+
+test('quitting during updater initialization prevents a late timer or startup check', async () => {
+  const initialization = deferred();
+  const app = createHarness({ initialization: initialization.promise });
+  await app.ready();
+  app.electronApp.emit('will-quit');
+  initialization.resolve();
+  await flush();
+  assert.equal(app.clock.scheduled.length, 0);
+  assert.equal(app.checkCalls, 0);
+  assert.equal(app.manager.isEnabled(), false);
+});
+
+test('disabled or failed updater initialization does not schedule periodic checks', async () => {
+  for (const options of [{ isPackaged: false }, { initializationError: new Error('load failed') }]) {
+    const app = createHarness(options);
+    await app.ready();
+    app.electronApp.emit('second-instance');
+    await flush();
+    assert.equal(app.clock.scheduled.length, 0);
+    assert.equal(app.checkCalls, 0);
+  }
 });

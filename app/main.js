@@ -36,6 +36,7 @@ const appIconPath = path.join(projectRoot, 'assets', 'electron', 'app-512.png');
 const trayIconPath = path.join(projectRoot, 'assets', 'electron', 'tray-24.png');
 
 const PORT = 8787;
+const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
 const rendererServerRequest = createRendererServerClient({ serverOrigin: SERVER_ORIGIN });
 electronApp.setName('SnapOverLAN');
@@ -51,6 +52,8 @@ let autoCopyController = null;
 let desktopShell = null;
 let updateManager = null;
 let updateManagerInitialization = null;
+let updateCheckTimer = null;
+let updaterDisposed = false;
 let removeUpdateStateListener = null;
 let updateDialogController = null;
 const settingsStore = createSettingsStore({
@@ -118,6 +121,10 @@ const initializeUpdateManager = () => {
         },
       },
     });
+    if (updaterDisposed) {
+      updateManager.dispose();
+      return;
+    }
     updateDialogController = createUpdateDialogController({
       BrowserWindow,
       dialog,
@@ -135,6 +142,11 @@ const initializeUpdateManager = () => {
       void updateDialogController.handleState(state);
     });
     void updateDialogController.handleState(updateManager.getState());
+    if (updateManager.isEnabled()) {
+      // Periodic checks never re-present a dismissed update; only user opens do.
+      updateCheckTimer = setInterval(() => { void checkForUpdates(); }, UPDATE_CHECK_INTERVAL_MS);
+      updateCheckTimer.unref();
+    }
   })().catch(() => {
     console.warn('SnapOverLAN updater: Initialization failed without affecting application startup.');
   });
@@ -143,7 +155,9 @@ const initializeUpdateManager = () => {
 
 const checkForUpdates = async ({ userInitiated = false } = {}) => {
   try {
+    if (updaterDisposed) return;
     await initializeUpdateManager();
+    if (updaterDisposed) return;
     // Inspect readiness before checking: a fresh download uses the state listener,
     // and dismissing it must not trigger a second prompt when the check completes.
     if (userInitiated && updateManager) {
@@ -424,6 +438,9 @@ if (!gotLock) {
   });
 
   electronApp.on('will-quit', () => {
+    updaterDisposed = true;
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = null;
     removeUpdateStateListener?.();
     removeUpdateStateListener = null;
     updateDialogController?.dispose();

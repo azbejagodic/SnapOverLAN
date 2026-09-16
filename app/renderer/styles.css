@@ -225,6 +225,7 @@ h3 {
 
 .refresh-button {
   width: 112px;
+  background: #00c2ff;
 }
 
 .header-button:hover:not(:disabled) {

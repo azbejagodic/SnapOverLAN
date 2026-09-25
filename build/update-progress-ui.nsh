@@ -4,20 +4,32 @@
 ; Reuse the existing application icon as an embedded resource, without extracting
 ; an asset at runtime. Builder already uses this same ICO for Windows Setup.
 Icon "${__FILEDIR__}\..\assets\electron\app.ico"
+!define SNAPOVERLAN_PROGRESS_CLOSE_DLL "${__FILEDIR__}\native\update-progress-close.dll"
 
 ; Shared native visuals only; production and preview both call these macros.
-; Colors: app/renderer/styles.css :root --bg, --panel, --ink, --ink-soft.
-; Spacing/type: app/renderer/update-dialog.css .update-panel (22px padding),
-; .update-copy (8px gap), h1 (17px/700), .update-message (13px),
-; .update-button (12px radius). Compact shell uses its 4px message spacing.
+; Original 432 x 192 client artwork: #343940 shell, #aeefff cyan panel,
+; 4px inset, 8px panel radius, and unchanged centered text rectangles.
 ; Banner has no WM_CTLCOLOR handler. Paint once with GDI into the existing
-; Static, which then handles repaints itself. No subclass, timer, or new plugin.
+; Static, which then handles repaints itself. Close handling is native code
+; because Banner's window lives on a separate thread from the NSIS interpreter.
 Var SnapOverLANUpdateBitmap
+Var SnapOverLANUpdateCenterX2
+Var SnapOverLANUpdateCenterY2
+Var SnapOverLANUpdateCloseModule
+Var SnapOverLANUpdateAllowDestroy
 
 !macro showSnapOverLANUpdateProgress
   Banner::show /set 76 "Almost there!" /set 1030 "SnapOverLAN is being updated.$\r$\nThe app will reopen automatically.$\r$\n$\r$\nThis should only take a moment." "SnapOverLAN Update"
   Banner::getWindow
   Pop $9
+  ; Save twice the original center before changing styles or dimensions.
+  ; Dedicated variables avoid temporary drawing registers changing the anchor.
+  System::Call '*(i, i, i, i) p.r10'
+  System::Call 'user32::GetWindowRect(p r9, p r10)'
+  System::Call '*$R0(i .r0, i .r1, i .r2, i .r3)'
+  System::Free $R0
+  IntOp $SnapOverLANUpdateCenterX2 $0 + $2
+  IntOp $SnapOverLANUpdateCenterY2 $1 + $3
   ; Set Banner's native taskbar/Alt+Tab icons, not the cyan content controls.
   ; NSIS Icon embeds group icon 103. LR_SHARED keeps ownership with Windows.
   System::Call 'kernel32::GetModuleHandleW(p 0) p.r0'
@@ -60,7 +72,7 @@ Var SnapOverLANUpdateBitmap
   System::Call 'kernel32::MulDiv(i 4, i r15, i 96) i.r4'
   IntOp $5 $R2 - $4
   IntOp $6 $R1 - $4
-  ; Inner radius = 12px outer radius - 4px inset = 8px (16px diameter).
+  ; Original 8px panel radius (16px diameter); applies only to the bitmap.
   System::Call 'kernel32::MulDiv(i 16, i r15, i 96) i.r7'
   System::Call 'gdi32::RoundRect(p r14, i r4, i r4, i r5, i r6, i r7, i r7)'
   System::Call 'gdi32::SelectObject(p r14, p r1)'
@@ -68,8 +80,7 @@ Var SnapOverLANUpdateBitmap
   System::Call 'gdi32::DeleteObject(p r0)'
   System::Call 'gdi32::SetBkMode(p r14, i 1)' ; transparent text background
 
-  ; Windows system-ui fallback. Inter WOFF2 and CSS gradients/shadows are not
-  ; supported by native Static controls. Fonts are released after rasterizing.
+  ; Windows system-ui fallback for Inter WOFF2. Release fonts after rasterizing.
   CreateFont $0 "Segoe UI" 13 700
   System::Call 'gdi32::SelectObject(p r14, p r0) p.r1'
   System::Call 'gdi32::SetTextColor(p r14, i 0x261C0D)' ; #0d1c26 heading
@@ -103,34 +114,79 @@ Var SnapOverLANUpdateBitmap
   SendMessage $8 0x172 0 $SnapOverLANUpdateBitmap ; STM_SETIMAGE / IMAGE_BITMAP
   System::Call 'user32::SetWindowPos(p r8, p 0, i 0, i 0, i r12, i r11, i 0x34)'
 
-  ; Remove only decorative native borders; the bitmap supplies the thin shell.
+  ; Native caption/system menu/minimize button, with no resize or maximize.
+  ; Clear DS_MODALFRAME too so Windows can display the small caption icon.
   System::Call 'user32::GetWindowLong(p r9, i -16) i.r0'
-  IntOp $0 $0 & 0xFF3FFFFF
+  IntOp $0 $0 & 0xFFFAFF7F ; ~(WS_THICKFRAME | WS_MAXIMIZEBOX | DS_MODALFRAME)
+  IntOp $0 $0 | 0x00CA0000 ; WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
   System::Call 'user32::SetWindowLong(p r9, i -16, i r0)'
-  System::Call 'user32::GetWindowLong(p r9, i -20) i.r0'
-  IntOp $0 $0 & 0xFFFFFCFE
-  System::Call 'user32::SetWindowLong(p r9, i -20, i r0)'
-  ; Preserve the original Banner center.
-  System::Call '*(i, i, i, i) p.r10'
-  System::Call 'user32::GetWindowRect(p r9, p r10)'
-  System::Call '*$R0(i .r0, i .r1, i .r2, i .r3)'
+  StrCpy $4 $0
+  System::Call 'user32::GetWindowLong(p r9, i -20) i.r5'
+  IntOp $5 $5 & 0xFFFFFC7E ; remove modal/tool-window and extra edge styles
+  IntOp $5 $5 | 0x00040000 ; WS_EX_APPWINDOW: taskbar restore while minimized
+  System::Call 'user32::SetWindowLong(p r9, i -20, i r5)'
+  System::Call 'user32::SetWindowTextW(p r9, w "SnapOverLAN Update")'
+  ; Keep Close disabled until the native hide-only handler is installed.
+  System::Call 'user32::GetSystemMenu(p r9, i 0) p.r0'
+  System::Call 'user32::EnableMenuItem(p r0, i 0xF060, i 1)' ; SC_CLOSE / MF_GRAYED
+
+  ; Keep the full 432 x 192 DPI-scaled client bitmap; add native frame space.
+  System::Call '*(i 0, i 0, i r12, i r11) p.r10'
+  System::Call 'user32::AdjustWindowRectEx(p r10, i r4, i 0, i r5)'
+  System::Call '*$R0(i .r0, i .r1, i .r6, i .r7)'
   System::Free $R0
-  IntOp $0 $0 + $2
-  IntOp $0 $0 - $R2
+  IntOp $6 $6 - $0
+  IntOp $7 $7 - $1
+  ; Center the OUTER window (including caption/frame) on the saved Banner center.
+  IntOp $0 $SnapOverLANUpdateCenterX2 - $6
   IntOp $0 $0 / 2
-  IntOp $1 $1 + $3
-  IntOp $1 $1 - $R1
+  IntOp $1 $SnapOverLANUpdateCenterY2 - $7
   IntOp $1 $1 / 2
-  System::Call 'user32::SetWindowPos(p r9, p 0, i r0, i r1, i r12, i r11, i 0x34)'
-  System::Call 'kernel32::MulDiv(i 24, i r15, i 96) i.r0'
-  System::Call 'gdi32::CreateRoundRectRgn(i 0, i 0, i r12, i r11, i r0, i r0) p.r0'
-  System::Call 'user32::SetWindowRgn(p r9, p r0, i 0) i.r1'
-  ${If} $1 == 0
-    System::Call 'gdi32::DeleteObject(p r0)'
+  System::Call 'user32::SetWindowPos(p r9, p 0, i r0, i r1, i r6, i r7, i 0x34)'
+
+  ; Supported DWM caption styling; unsupported attributes leave Windows defaults.
+  ; Honor high contrast. No custom non-client painting or window region is used.
+  System::Call '*(i 12, i 0, p 0) p.r0' ; HIGHCONTRASTW (32-bit NSIS)
+  System::Call 'user32::SystemParametersInfoW(i 0x42, i 12, p r0, i 0) i.r1'
+  System::Call '*$0(i, i .r2)'
+  System::Free $0
+  IntOp $2 $2 & 1 ; HCF_HIGHCONTRASTON
+  ${If} $1 != 0
+  ${AndIf} $2 == 0
+    System::Call 'dwmapi::DwmSetWindowAttribute(p r9, i 20, *i 1, i 4)'
+    System::Call 'dwmapi::DwmSetWindowAttribute(p r9, i 35, *i 0x403934, i 4)' ; #343940 shell (COLORREF)
+    System::Call 'dwmapi::DwmSetWindowAttribute(p r9, i 36, *i 0xFFFDF5, i 4)'
+  ${EndIf}
+
+  ; This macro is used only for ${isUpdated} (or the standalone UI preview).
+  ; Keep the DLL loaded until Banner::destroy has finished, even after X hides
+  ; the window. A failed attachment leaves Close disabled, never unsafe.
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\SnapOverLANProgressClose.dll" "${SNAPOVERLAN_PROGRESS_CLOSE_DLL}"
+  System::Call 'kernel32::LoadLibraryW(w "$PLUGINSDIR\SnapOverLANProgressClose.dll") p.s'
+  Pop $SnapOverLANUpdateCloseModule
+  StrCpy $1 0
+  ${If} $SnapOverLANUpdateCloseModule != 0
+    System::Call 'kernel32::GetProcAddress(p $SnapOverLANUpdateCloseModule, m "_AllowDestroy@0") p.s'
+    Pop $SnapOverLANUpdateAllowDestroy
+    System::Call 'kernel32::GetProcAddress(p $SnapOverLANUpdateCloseModule, m "_Attach@4") p.r0'
+    ${If} $0 != 0
+    ${AndIf} $SnapOverLANUpdateAllowDestroy != 0
+      System::Call '::$0(p r9) i.r1'
+    ${EndIf}
+    ${If} $1 != 0
+      System::Call 'user32::GetSystemMenu(p r9, i 0) p.r0'
+      System::Call 'user32::EnableMenuItem(p r0, i 0xF060, i 0)' ; SC_CLOSE / MF_ENABLED
+    ${Else}
+      System::Call 'kernel32::FreeLibrary(p $SnapOverLANUpdateCloseModule)'
+      StrCpy $SnapOverLANUpdateCloseModule 0
+      StrCpy $SnapOverLANUpdateAllowDestroy 0
+    ${EndIf}
   ${EndIf}
 
   ShowWindow $9 ${SW_SHOW}
   System::Call 'user32::RedrawWindow(p r9, p 0, p 0, i 0x185)'
+  ; This flag tracks resources awaiting cleanup, including a user-hidden window.
   StrCpy $SnapOverLANUpdateProgressVisible "1"
 !macroend
 
@@ -145,7 +201,15 @@ Var SnapOverLANUpdateBitmap
 
 !macro closeSnapOverLANUpdateProgress
   ${If} $SnapOverLANUpdateProgressVisible == "1"
+    ${If} $SnapOverLANUpdateCloseModule != 0
+      System::Call '::$SnapOverLANUpdateAllowDestroy()'
+    ${EndIf}
     Banner::destroy
+    ${If} $SnapOverLANUpdateCloseModule != 0
+      System::Call 'kernel32::FreeLibrary(p $SnapOverLANUpdateCloseModule)'
+      StrCpy $SnapOverLANUpdateCloseModule 0
+      StrCpy $SnapOverLANUpdateAllowDestroy 0
+    ${EndIf}
     System::Call 'gdi32::DeleteObject(p $SnapOverLANUpdateBitmap)'
     StrCpy $SnapOverLANUpdateProgressVisible "0"
     ; Banner can reveal its owner when it closes. Keep the silent installer hidden.

@@ -24,10 +24,10 @@ const createServerClient = ({ port, requestTimeoutMs = 1500 }) => {
     req.setTimeout(requestTimeoutMs, () => req.destroy(new Error(`Timed out requesting ${url}`)));
   });
 
-  const postServerShutdown = (token) => new Promise((resolve, reject) => {
+  const postServerShutdown = (token, decision) => new Promise((resolve, reject) => {
     const req = http.request(shutdownUrl, {
       method: 'POST',
-      headers: { 'x-snapoverlan-shutdown-token': token },
+      headers: { 'x-snapoverlan-shutdown-token': token, 'Content-Type': 'application/json' },
     }, (res) => {
       res.resume();
       if (res.statusCode !== 202) {
@@ -38,7 +38,44 @@ const createServerClient = ({ port, requestTimeoutMs = 1500 }) => {
     });
     req.on('error', reject);
     req.setTimeout(requestTimeoutMs, () => req.destroy(new Error('Timed out requesting server shutdown')));
-    req.end();
+    req.end(decision ? JSON.stringify(decision) : undefined);
+  });
+
+  const watchServerShutdown = (token, observer) => new Promise((resolve, reject) => {
+    let opened = false;
+    let disposed = false;
+    const req = http.get(shutdownUrl, {
+      headers: { 'x-snapoverlan-shutdown-token': token },
+    }, (res) => {
+      clearTimeout(timer);
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`Shutdown control stream failed (${res.statusCode})`));
+        return;
+      }
+      opened = true;
+      let pending = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        pending += chunk;
+        let newline;
+        while ((newline = pending.indexOf('\n')) !== -1) {
+          const line = pending.slice(0, newline);
+          pending = pending.slice(newline + 1);
+          try { observer.state(JSON.parse(line)); }
+          catch (error) { observer.error(error); }
+        }
+      });
+      res.on('error', (error) => { if (!disposed) observer.error(error); });
+      res.on('end', () => { if (!disposed) observer.closed(); });
+      resolve(() => { disposed = true; req.destroy(); });
+    });
+    const timer = setTimeout(() => req.destroy(new Error('Timed out opening shutdown control stream')), requestTimeoutMs);
+    req.on('error', (error) => {
+      clearTimeout(timer);
+      if (!opened) reject(error);
+      else if (!disposed) observer.error(error);
+    });
   });
 
   const getServerIdentity = async () => {
@@ -86,7 +123,7 @@ const createServerClient = ({ port, requestTimeoutMs = 1500 }) => {
     return !(await isPortInUse());
   };
 
-  return { getServerIdentity, isPortInUse, postServerShutdown, waitForPortRelease };
+  return { getServerIdentity, isPortInUse, postServerShutdown, waitForPortRelease, watchServerShutdown };
 };
 
 export { createServerClient };

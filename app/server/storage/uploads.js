@@ -42,10 +42,18 @@ const initUploadBatch = (req) => {
 };
 
 const removeUploadBatch = async (req) => {
-  if (req.uploadBatchDir) await fs.rm(req.uploadBatchDir, { recursive: true, force: true });
+  await Promise.all(req.uploadStorageTasks || []);
+  if (req.uploadBatchDir) await fs.rm(req.uploadBatchDir, { recursive: true, force: true, maxRetries: 3 });
+};
+
+const assertUploadConnected = (req) => {
+  if (req.aborted || req.uploadInterrupted) {
+    throw new Error('Upload interrupted.');
+  }
 };
 
 const finalizeUploadedBatch = async (req) => {
+  assertUploadConnected(req);
   if (!req.files?.length || !req.uploadBatchId) {
     await applyBatchRetention();
     return [];
@@ -53,10 +61,14 @@ const finalizeUploadedBatch = async (req) => {
   if (req.uploadBatchDir) {
     const batchDir = resolveBatchDir(req.uploadBatchId);
     await fs.rename(req.uploadBatchDir, batchDir);
+    req.uploadBatchDir = batchDir;
+    assertUploadConnected(req);
     for (const file of req.files) file.path = path.join(batchDir, file.filename);
   }
   await writeBatchMetadata(req.uploadBatchId, { createdAt: req.uploadBatchCreatedAt });
+  assertUploadConnected(req);
   await setCurrentBatchId(req.uploadBatchId);
+  req.uploadCommitted = true;
   await applyBatchRetention();
   return toUploadedFileRecords(req.files);
 };
@@ -66,6 +78,7 @@ const storage = multer.diskStorage({
     try {
       initUploadBatch(req);
       await fs.mkdir(req.uploadBatchDir, { recursive: true });
+      assertUploadConnected(req);
       cb(null, req.uploadBatchDir);
     } catch (err) { cb(err); }
   },
@@ -81,6 +94,19 @@ const storage = multer.diskStorage({
   },
 });
 
+// Multer may report a disconnect before an asynchronous destination callback ends.
+// Track disk work so cleanup cannot run before a late mkdir/write recreates staging.
+const handleFile = storage._handleFile.bind(storage);
+storage._handleFile = (req, file, cb) => {
+  let settled;
+  const task = new Promise((resolve) => { settled = resolve; });
+  (req.uploadStorageTasks ||= []).push(task);
+  handleFile(req, file, (error, info) => {
+    settled();
+    cb(error, info);
+  });
+};
+
 const upload = multer({
   storage,
   limits: { files: MAX_FILES, fileSize: MAX_FILE_SIZE, fields: 0, parts: MAX_FILES + 1 },
@@ -90,22 +116,26 @@ const upload = multer({
   },
 });
 
-const validateUploadedFiles = async (req, res, next) => {
-  try {
-    for (const file of req.files || []) {
-      const verified = await validateImage(file.path);
-      const filename = `${path.basename(file.filename, '.upload')}${verified.extension}`;
-      const filePath = path.join(req.uploadBatchDir, filename);
-      await fs.rename(file.path, filePath);
-      Object.assign(file, { filename, path: filePath, mimetype: verified.mimeType });
-    }
-    next();
-  } catch (error) { await uploadErrorHandler(error, req, res, next); }
+const validateUploadedFiles = async (req) => {
+  for (const file of req.files || []) {
+    assertUploadConnected(req);
+    const verified = await validateImage(file.path);
+    assertUploadConnected(req);
+    const filename = `${path.basename(file.filename, '.upload')}${verified.extension}`;
+    const filePath = path.join(req.uploadBatchDir, filename);
+    await fs.rename(file.path, filePath);
+    Object.assign(file, { filename, path: filePath, mimetype: verified.mimeType });
+  }
+  assertUploadConnected(req);
 };
 
 const uploadErrorHandler = async (err, req, res, next) => {
   if (!err) { next(); return; }
-  try { await removeUploadBatch(req); } catch {}
+  if (!req.uploadCommitted) {
+    try { await removeUploadBatch(req); }
+    catch (error) { console.warn('Could not remove interrupted or failed upload staging:', error); }
+  }
+  if (req.aborted || req.uploadInterrupted || res.destroyed) return;
   if (err instanceof multer.MulterError) {
     let message = err.message;
     if (err.code === 'LIMIT_FILE_COUNT') message = `Maximum ${MAX_FILES} files are allowed.`;

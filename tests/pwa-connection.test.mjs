@@ -385,10 +385,50 @@ test('an upload network failure is caught and keeps the selected file available'
   assert.equal(elements.uploadBtn.disabled, false);
 
   await elements.uploadBtn.dispatch('click');
-  assert.equal(elements.status.textContent, 'Upload failed. Your selected files are still available.');
+  assert.equal(elements.status.textContent, 'Upload interrupted. Check your Wi-Fi connection and try again.');
   assert.equal(elements.status.className, 'error');
   assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
   assert.equal(elements.uploadBtn.disabled, false);
+});
+
+for (const status of [400, 500, 503]) {
+  test(`HTTP ${status} preserves selected photos and uses the appropriate server error message`, async () => {
+    let fail = true;
+    const elements = createHarness(async () => fail ? { ok: false, status } : { ok: true, status: 200 });
+    elements.galleryInput.files = [{ name: 'photo.jpg', type: 'image/jpeg', size: 10 }];
+    await elements.galleryInput.dispatch('change');
+    await elements.uploadBtn.dispatch('click');
+    assert.equal(elements.status.textContent, status === 503
+      ? 'SnapOverLAN is shutting down. Try again after reopening it.'
+      : 'Upload failed. Your selected files are still available.');
+    assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+    assert.equal(elements.uploadBtn.disabled, false);
+    fail = false;
+    await elements.uploadBtn.dispatch('click');
+    assert.equal(elements.status.textContent, 'Uploaded 1 photo.');
+    assert.equal(elements.selectedCount.textContent, 'Selected: 0 / 10');
+  });
+}
+
+test('network interruption allows retry with the same selected photo after reconnection', async () => {
+  let offline = true;
+  const harness = createHarness(async () => {
+    if (offline) throw new TypeError('Failed to fetch');
+    return { ok: true };
+  }, { savedPreference: 'false' });
+  const elements = harness;
+  const { formDataEntries } = harness;
+  const photo = { name: 'phone.jpg', type: 'image/jpeg', size: 10 };
+  elements.galleryInput.files = [photo];
+  await elements.galleryInput.dispatch('change');
+  await elements.uploadBtn.dispatch('click');
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+  assert.equal(elements.uploadBtn.disabled, false);
+  offline = false;
+  await elements.uploadBtn.dispatch('click');
+  assert.equal(formDataEntries[0][1], photo);
+  assert.equal(formDataEntries[1][1], photo);
+  assert.equal(elements.status.textContent, 'Uploaded 1 photo.');
 });
 
 test('legacy app-shell worker and cache cleanup cannot block startup', async () => {

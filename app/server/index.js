@@ -17,6 +17,7 @@ import { createMdnsAdvertiser } from './mdns.js';
 import { ensureStorageDirectories } from './storage.js';
 import { createServerApp } from './app.js';
 import { createParentBridge } from './parent-bridge.js';
+import { uploadLifecycle } from './upload-lifecycle.js';
 import {
   SERVER_APPLICATION,
   SERVER_PROTOCOL_VERSION,
@@ -213,12 +214,14 @@ const watchParentProcess = () => {
 };
 
 const shutdownServer = (reason) => {
+  const uploadsDrained = uploadLifecycle.beginDrain();
   if (shutdownPromise) {
     return shutdownPromise;
   }
 
   shutdownPromise = (async () => {
     try {
+      await uploadsDrained;
       if (parentWatchTimer) {
         clearInterval(parentWatchTimer);
         parentWatchTimer = null;
@@ -243,16 +246,23 @@ const isDirectRun = process.env.SNAPOVERLAN_RUN_SERVER === '1'
     && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href);
 
 if (isDirectRun) {
+  uploadLifecycle.subscribeDrain((state) => {
+    if (process.connected) process.send?.({ type: 'snapoverlan:drain-state', ...state }, () => {});
+  });
   watchParentProcess();
   process.once('SIGINT', () => shutdownServer('SIGINT'));
   process.once('SIGTERM', () => shutdownServer('SIGTERM'));
   process.on('message', (message) => {
+    if (message?.type === 'snapoverlan:drain-decision') {
+      uploadLifecycle.decideDrain(message);
+      return;
+    }
     if (handleAutoCopySettingResponse(message)) {
       return;
     }
     if (message?.type === 'snapoverlan:shutdown') {
-      process.send?.({ type: 'snapoverlan:shutdown-accepted' });
       shutdownServer('electron-ipc');
+      process.send?.({ type: 'snapoverlan:shutdown-accepted' });
     }
   });
   startServer().catch((err) => {

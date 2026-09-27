@@ -316,6 +316,7 @@ uploadBtn.addEventListener('click', async () => {
 
   isUploading = true;
   updateSelectedCount();
+  let failureMessage = 'Upload failed. Your selected files are still available.';
 
   try {
     const uploadFiles = selectedFiles.slice();
@@ -329,11 +330,20 @@ uploadBtn.addEventListener('click', async () => {
     const formData = new FormData();
     preparedFiles.forEach((file) => formData.append('photos', file, file.name));
 
-    const response = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData,
-    });
+    let response;
+    try {
+      response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+    } catch (error) {
+      failureMessage = 'Upload interrupted. Check your Wi-Fi connection and try again.';
+      throw error;
+    }
 
+    if (response.status === 503) {
+      failureMessage = 'SnapOverLAN is shutting down. Try again after reopening it.';
+    }
     if (!response.ok) throw new Error(`Upload failed (${response.status})`);
 
     const uploadedCount = uploadFiles.length;
@@ -344,7 +354,7 @@ uploadBtn.addEventListener('click', async () => {
     setStatus(`Uploaded ${uploadedCount} photo${uploadedCount > 1 ? 's' : ''}.`, 'success');
   } catch (error) {
     isUploading = false;
-    setStatus('Upload failed. Your selected files are still available.', 'error');
+    setStatus(failureMessage, 'error');
     updateSelectedCount();
   }
 });

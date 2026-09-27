@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { Router } from 'express';
 import { PORT } from '../config.js';
+import { uploadLifecycle } from '../upload-lifecycle.js';
+import { isPrivateLanUrl } from '../../lan-address.js';
 import { SERVER_APPLICATION, SERVER_CONTROL_ID, SERVER_PROTOCOL_VERSION } from '../identity.js';
 
 const createSystemRouter = ({
@@ -10,6 +12,7 @@ const createSystemRouter = ({
   onShutdown = () => {},
   setAutoCopySetting = null,
   shutdownToken = '',
+  drainLifecycle = uploadLifecycle,
 }) => {
   const router = Router();
   router.get('/server-control', (req, res) => {
@@ -22,15 +25,32 @@ const createSystemRouter = ({
       server: getServerStatus(),
     });
   });
-  router.post('/server-shutdown', (req, res) => {
+  const authorizeShutdown = (req, res, next) => {
     const suppliedToken = req.get('x-snapoverlan-shutdown-token') || '';
     const suppliedTokenBuffer = Buffer.from(suppliedToken);
     const shutdownTokenBuffer = Buffer.from(shutdownToken);
     const validToken = suppliedTokenBuffer.length === shutdownTokenBuffer.length
       && crypto.timingSafeEqual(suppliedTokenBuffer, shutdownTokenBuffer);
     if (!isLoopbackRequest(req) || !validToken) { res.sendStatus(404); return; }
+    next();
+  };
+  // One authenticated control stream carries state changes; no status polling.
+  router.get('/server-shutdown', authorizeShutdown, (req, res) => {
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-store');
+    const sendState = (state) => res.write(`${JSON.stringify(state)}\n`);
+    const unsubscribe = drainLifecycle.subscribeDrain(sendState);
+    res.once('close', unsubscribe);
+    sendState(drainLifecycle.getDrainState());
+  });
+  router.post('/server-shutdown', authorizeShutdown, (req, res) => {
+    if (req.body?.decision !== undefined) {
+      if (!drainLifecycle.decideDrain(req.body)) { res.sendStatus(409); return; }
+      res.status(202).json({ stopping: true });
+      return;
+    }
+    onShutdown('localhost-control');
     res.status(202).json({ stopping: true });
-    setImmediate(() => onShutdown('localhost-control'));
   });
   router.get('/auto-copy', async (req, res) => {
     if (!isLoopbackRequest(req)) { res.sendStatus(404); return; }
@@ -57,16 +77,12 @@ const createSystemRouter = ({
   router.get('/phone-url', (req, res) => {
     const serverStatus = getServerStatus();
     const serverPort = serverStatus?.port || PORT;
-    const lanUrls = Array.isArray(serverStatus?.lanUrls) ? serverStatus.lanUrls : [];
-    const requestHost = req.get('host') || `localhost:${serverPort}`;
-    const fallbackUrl = `http://${requestHost}`;
-    const urls = lanUrls.length > 0
-      ? lanUrls
-      : [{ address: requestHost.split(':')[0], private: false, url: fallbackUrl }];
+    const urls = (Array.isArray(serverStatus?.lanUrls) ? serverStatus.lanUrls : [])
+      .filter((item) => isPrivateLanUrl(item.url));
     res.json({
       port: serverPort,
-      stableUrl: serverStatus?.stableUrl || '',
-      primaryUrl: urls[0].url,
+      stableUrl: urls.length ? serverStatus?.stableUrl || '' : '',
+      primaryUrl: urls[0]?.url || '',
       urls,
     });
   });

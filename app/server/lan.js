@@ -1,11 +1,6 @@
 import os from 'os';
 import { PORT } from './config.js';
-
-const isPrivateIpv4 = (address) => (
-  address.startsWith('10.') ||
-  address.startsWith('192.168.') ||
-  /^172\.(1[6-9]|2\d|3[0-1])\./.test(address)
-);
+import { isPrivateIpv4 } from '../lan-address.js';
 
 const getIpv4Rank = (address) => {
   if (address.startsWith('192.168.')) return 0;
@@ -21,7 +16,7 @@ const getLanIpv4Addresses = () => {
 
   for (const interfaces of Object.values(os.networkInterfaces())) {
     for (const details of interfaces || []) {
-      if (details.family !== 'IPv4' || details.internal || seen.has(details.address)) {
+      if (details.family !== 'IPv4' || details.internal || !isPrivateIpv4(details.address) || seen.has(details.address)) {
         continue;
       }
 
@@ -40,18 +35,15 @@ const getLanIpv4Addresses = () => {
 };
 
 const getPreferredLanIpv4Address = (addresses = getLanIpv4Addresses()) => {
-  const usableAddresses = addresses.filter(({ address }) => !address.startsWith('169.254.'));
-  return usableAddresses.find(({ private: isPrivate }) => isPrivate)?.address
-    || usableAddresses[0]?.address
-    || '';
+  return addresses.find(({ address }) => isPrivateIpv4(address))?.address || '';
 };
 
 const getPhoneUrlRecords = ({
   addresses = getLanIpv4Addresses(),
   port = PORT,
-} = {}) => addresses.map(({ address, private: isPrivate }) => ({
+} = {}) => addresses.filter(({ address }) => isPrivateIpv4(address)).map(({ address }) => ({
   address,
-  private: isPrivate,
+  private: true,
   url: `http://${address}:${port}`,
 }));
 

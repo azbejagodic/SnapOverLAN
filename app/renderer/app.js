@@ -1,6 +1,7 @@
 import { drawQrCode } from './qr-code.js';
 import { fetchJson } from './server-api.js';
 import { createBatchHistory } from './batch-history.js';
+import { isPrivateLanUrl } from '../lan-address.js';
 
 const refreshBtn = document.getElementById('refreshBtn');
 const qrBtn = document.getElementById('qrBtn');
@@ -27,6 +28,7 @@ const AUTO_REFRESH_MS = 5000;
 const AUTO_COPY_MESSAGE_MS = 4000;
 
 let currentPhoneUrl = '';
+let lanAvailable = false;
 let dashboardRefreshInFlight = false;
 let autoRefreshTimer = null;
 let batchHistory = null;
@@ -53,20 +55,24 @@ function parseUrl(value) {
 }
 
 function isLocalHostname(hostname) {
-  return ['localhost', '127.0.0.1', '::1'].includes(hostname);
+  const normalized = hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  return normalized === 'localhost' || normalized.endsWith('.localhost')
+    || /^127\./.test(normalized)
+    || ['::1', '::', '0.0.0.0'].includes(normalized)
+    || /^::ffff:7f[0-9a-f]{2}:/.test(normalized);
 }
 
 function isUsablePhoneUrl(value) {
   const parsed = parseUrl(value);
-  return Boolean(parsed && !isLocalHostname(parsed.hostname));
+  return Boolean(parsed && ['http:', 'https:'].includes(parsed.protocol)
+    && !isLocalHostname(parsed.hostname));
 }
 
 function choosePhoneUrl(data) {
   const urls = Array.isArray(data?.urls) ? data.urls : [];
-  const privateUrl = urls.find((item) => item.private && isUsablePhoneUrl(item.url));
-  const nonLocalUrl = urls.find((item) => isUsablePhoneUrl(item.url));
-  const primaryUrl = isUsablePhoneUrl(data?.primaryUrl) ? { url: data.primaryUrl } : null;
-  return privateUrl || nonLocalUrl || primaryUrl || null;
+  const privateUrl = urls.find((item) => isPrivateLanUrl(item.url));
+  const primaryUrl = isPrivateLanUrl(data?.primaryUrl) ? { url: data.primaryUrl } : null;
+  return privateUrl || primaryUrl || null;
 }
 
 function setBadge(element, baseClass, state, label) {
@@ -80,12 +86,13 @@ function renderStatus({ state } = {}) {
   const statusState = state || (
     lastServerStatusData?.status === 'listening' ? 'online' : 'checking'
   );
-  const label = statusState === 'online'
+  const displayState = statusState === 'online' && !lanAvailable ? 'offline' : statusState;
+  const label = displayState === 'online'
     ? 'Server online'
-    : statusState === 'offline'
-      ? 'Server offline'
+    : displayState === 'offline'
+      ? 'Server unavailable'
       : 'Checking server';
-  setBadge(connectionPill, 'server-line', statusState, label);
+  setBadge(connectionPill, 'server-line', displayState, label);
 }
 
 function renderDesktopControls() {
@@ -121,7 +128,9 @@ async function syncDesktopControls() {
     ]);
     backgroundModeEnabled = server?.state === 'online' && Boolean(background);
     setDesktopServerState(server?.state);
-    if (server?.state === 'error' && server.error) {
+    if (server?.state === 'error' || server?.state === 'offline') {
+      lastServerStatusData = null;
+      renderPhoneSetup(null);
       renderStatus({ state: 'offline' });
     }
   } catch (error) {
@@ -209,8 +218,9 @@ function renderDiagnostics(data) {
   diagnosticsList.innerHTML = '';
   const isListening = data.status === 'listening';
   if (diagnosticsSummary) {
-    diagnosticsSummary.className = `summary status-badge ${isListening ? 'online' : 'offline'}`;
-    diagnosticsSummary.textContent = isListening ? 'Server online' : 'Status unknown';
+    const available = isListening && lanAvailable;
+    diagnosticsSummary.className = `summary status-badge ${available ? 'online' : 'offline'}`;
+    diagnosticsSummary.textContent = available ? 'Server online' : 'Server unavailable';
   }
   addDiagnosticRow('Server status', data.status || 'unknown');
   addDiagnosticRow('Launcher', getLauncherStatus());
@@ -219,11 +229,11 @@ function renderDiagnostics(data) {
   addDiagnosticRow('Port', String(data.port || 'unknown'));
   addDiagnosticRow('Device ID', data.deviceId || 'Not available');
   addDiagnosticRow('.local hostname', data.hostname || 'Not available');
-  addDiagnosticRow('Stable phone URL', data.stableUrl || 'mDNS unavailable');
-  addDiagnosticRow('Primary phone URL', currentPhoneUrl || data.primaryLanUrl || 'No LAN URL detected');
+  addDiagnosticRow('Stable phone URL', lanAvailable ? data.stableUrl || 'mDNS unavailable' : 'LAN unavailable');
+  addDiagnosticRow('Primary phone URL', currentPhoneUrl || 'No LAN URL detected');
   addDiagnosticRow('Runtime data', data.runtimeDataDir || 'unknown');
   addDiagnosticRow('Upload staging', data.uploadTempDir || 'unknown');
-  renderUrlList(diagnosticsUrls, 'Detected LAN URLs', data.lanUrls || []);
+  renderUrlList(diagnosticsUrls, 'Detected LAN URLs', (data.lanUrls || []).filter((item) => isPrivateLanUrl(item.url)));
 
   const privateLanUrls = Array.isArray(data.lanUrls)
     ? data.lanUrls.filter((item) => item.private)
@@ -243,7 +253,7 @@ function renderDiagnosticsError(error) {
   diagnosticsList.innerHTML = '';
   if (diagnosticsSummary) {
     diagnosticsSummary.className = 'summary status-badge offline';
-    diagnosticsSummary.textContent = 'Server offline';
+    diagnosticsSummary.textContent = 'Server unavailable';
   }
   if (diagnosticsWarning) {
     diagnosticsWarning.hidden = false;
@@ -273,15 +283,20 @@ function renderQrCode(phoneUrl) {
 }
 
 function renderPhoneSetup(data) {
-  const stableUrl = isUsablePhoneUrl(data?.stableUrl) ? data.stableUrl : '';
+  // A retained mDNS name alone does not prove that a LAN interface is available.
+  lanAvailable = Boolean(choosePhoneUrl(data));
+  const stableUrl = isUsablePhoneUrl(data?.stableUrl) && lanAvailable ? data.stableUrl : '';
   currentPhoneUrl = stableUrl || choosePhoneUrl(data)?.url || '';
   phoneUrlInput.textContent = currentPhoneUrl;
   phoneUrlInput.title = currentPhoneUrl;
+  qrBtn.disabled = !currentPhoneUrl;
+  if (!currentPhoneUrl) qrModal.hidden = true;
   renderQrCode(currentPhoneUrl);
   renderStatus();
 }
 
 function openQrModal() {
+  if (!currentPhoneUrl) return;
   renderQrCode(currentPhoneUrl);
   qrModal.hidden = false;
   closeQrBtn?.focus();
@@ -290,21 +305,6 @@ function openQrModal() {
 function closeQrModal() {
   qrModal.hidden = true;
   qrBtn?.focus();
-}
-
-async function loadPhoneSetup() {
-  try {
-    const data = await fetchJson('/api/phone-url');
-    renderPhoneSetup(data);
-    return data;
-  } catch (error) {
-    currentPhoneUrl = '';
-    phoneUrlInput.textContent = '';
-    phoneUrlInput.title = '';
-    renderQrCode('');
-    renderStatus({ state: 'offline' });
-    return null;
-  }
 }
 
 async function loadServerStatus({ showActivity = false } = {}) {
@@ -325,6 +325,7 @@ async function loadServerStatus({ showActivity = false } = {}) {
       throw new Error('Port 8787 is responding, but it is not a verified SnapOverLAN server.');
     }
     lastServerStatusData = status;
+    renderPhoneSetup({ urls: status.lanUrls, primaryUrl: status.primaryLanUrl, stableUrl: status.stableUrl });
     if (desktopServerState !== 'starting' && desktopServerState !== 'stopping') {
       setDesktopServerState('online');
     }
@@ -333,6 +334,7 @@ async function loadServerStatus({ showActivity = false } = {}) {
     return status;
   } catch (error) {
     lastServerStatusData = null;
+    renderPhoneSetup(null);
     if (desktopServerState !== 'starting'
       && desktopServerState !== 'stopping'
       && desktopServerState !== 'error') {
@@ -357,7 +359,6 @@ async function refreshDashboard({ source = 'manual' } = {}) {
   try {
     await Promise.all([
       loadServerStatus({ showActivity }),
-      loadPhoneSetup(),
       batchHistory.load(),
     ]);
   } finally {
@@ -381,7 +382,7 @@ function stopAutoRefresh() {
 }
 
 renderStatus({ state: 'checking' });
-renderQrCode('');
+renderPhoneSetup(null);
 
 batchHistory = createBatchHistory({
   batchesList,
@@ -455,7 +456,11 @@ window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
   backgroundModeEnabled = server?.state === 'online' && Boolean(backgroundMode);
   setDesktopServerState(server?.state);
   if (server?.state === 'starting') renderStatus({ state: 'checking' });
-  else if (server?.state === 'error') renderStatus({ state: 'offline', message: server.error });
+  else if (server?.state === 'error' || server?.state === 'offline') {
+    lastServerStatusData = null;
+    renderPhoneSetup(null);
+    renderStatus({ state: 'offline', message: server.error });
+  }
   else if (server?.state === 'online') renderStatus({ state: 'online' });
 });
 window.snapOverLAN?.onAutoCopyResult?.(showAutoCopyResult);

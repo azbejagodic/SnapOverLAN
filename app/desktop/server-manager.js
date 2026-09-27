@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { createServerClient } from './server-client.js';
+import { waitForUploadDrain } from './upload-drain.js';
 
 const SERVER_STOP_TIMEOUT_MS = 1000;
 const SERVER_FORCE_STOP_TIMEOUT_MS = 500;
@@ -14,6 +15,7 @@ const createServerManager = ({
   isQuitting,
   onAutoCopyUnavailable,
   onMessage,
+  onUploadDrainTimeout,
   onStateChanged,
   port,
   projectRoot,
@@ -64,6 +66,34 @@ const createServerManager = ({
     serverProcess.once('exit', handleExit);
   });
 
+  const drainOwnedServer = (serverProcess) => waitForUploadDrain({
+    askToContinue: onUploadDrainTimeout,
+    subscribe: (observer) => {
+      const message = (value) => {
+        if (value?.type === 'snapoverlan:drain-state') observer.state(value);
+      };
+      const disconnected = () => observer.error(new Error('Server shutdown IPC disconnected.'));
+      serverProcess.on('message', message);
+      serverProcess.once('exit', observer.closed);
+      serverProcess.once('disconnect', disconnected);
+      if (serverProcess.exitCode !== null) observer.closed();
+      return () => {
+        serverProcess.removeListener('message', message);
+        serverProcess.removeListener('exit', observer.closed);
+        serverProcess.removeListener('disconnect', disconnected);
+      };
+    },
+    start: () => serverProcess.send({ type: 'snapoverlan:shutdown' }),
+    decide: (decision) => serverProcess.send({ type: 'snapoverlan:drain-decision', ...decision }),
+  });
+
+  const drainReusedServer = (identity) => waitForUploadDrain({
+    askToContinue: onUploadDrainTimeout,
+    subscribe: (observer) => client.watchServerShutdown(identity.shutdownToken, observer),
+    start: () => client.postServerShutdown(identity.shutdownToken),
+    decide: (decision) => client.postServerShutdown(identity.shutdownToken, decision),
+  });
+
   const detachOwnedServerMessageListener = (serverProcess) => {
     const listener = ownedServerMessageListeners.get(serverProcess);
     if (!listener) return;
@@ -74,6 +104,7 @@ const createServerManager = ({
   const attachOwnedServerMessageListener = (serverProcess) => {
     detachOwnedServerMessageListener(serverProcess);
     const listener = (message) => {
+      if (message?.type === 'snapoverlan:drain-state') return;
       onMessage(serverProcess, message).catch((error) => {
         console.warn('Could not handle upload completion event:', error);
       });
@@ -94,7 +125,7 @@ const createServerManager = ({
     }
     logAutoCopy('requesting ownership from verified reused server');
     try {
-      await client.postServerShutdown(identity.shutdownToken);
+      await drainReusedServer(identity);
       const released = await client.waitForPortRelease(
         SERVER_STOP_TIMEOUT_MS + SERVER_FORCE_STOP_TIMEOUT_MS,
       );
@@ -228,8 +259,14 @@ const createServerManager = ({
     if (!status) {
       if (ownedServerProcess === serverProcess) ownedServerProcess = null;
       if (serverProcess.exitCode === null) {
-        serverProcess.kill();
-        await waitForProcessExit(serverProcess, SERVER_FORCE_STOP_TIMEOUT_MS);
+        if (serverProcess.connected) {
+          await drainOwnedServer(serverProcess);
+          await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
+        }
+        if (serverProcess.exitCode === null) {
+          serverProcess.kill();
+          await waitForProcessExit(serverProcess, SERVER_FORCE_STOP_TIMEOUT_MS);
+        }
       }
       const portConflict = await client.isPortInUse();
       const error = portConflict
@@ -299,15 +336,11 @@ const createServerManager = ({
     let exited = false;
     let forced = false;
     if (serverProcess?.connected) {
-      try {
-        serverProcess.send({ type: 'snapoverlan:shutdown' });
-        exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
-      } catch (error) { console.warn('IPC server shutdown failed:', error); }
+      await drainOwnedServer(serverProcess);
+      exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
     } else if (identity?.shutdownToken) {
-      try {
-        await client.postServerShutdown(identity.shutdownToken);
-        exited = await client.waitForPortRelease(SERVER_STOP_TIMEOUT_MS);
-      } catch (error) { console.warn('Graceful server shutdown failed:', error); }
+      await drainReusedServer(identity);
+      exited = await client.waitForPortRelease(SERVER_STOP_TIMEOUT_MS);
     }
     if (!exited && serverProcess?.exitCode === null) {
       console.warn('Forcing the owned SnapOverLAN server process to stop.');

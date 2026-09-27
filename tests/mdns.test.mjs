@@ -395,11 +395,10 @@ test('IP discovery remains available and selects the private LAN address for mDN
   assert.equal(getPreferredLanIpv4Address(addresses), '192.168.1.25');
   assert.deepEqual(getPhoneUrlRecords({ addresses, port: 8787 }), [
     { address: '192.168.1.25', private: true, url: 'http://192.168.1.25:8787' },
-    { address: '26.10.20.30', private: false, url: 'http://26.10.20.30:8787' },
   ]);
 });
 
-test('/api/phone-url exposes stableUrl while preserving direct IP primaryUrl and fallbacks', async (t) => {
+test('/api/phone-url exposes private LAN URLs and clears all phone URLs when LAN is unavailable', async (t) => {
   let status = {
     port: 8787,
     stableUrl: 'http://snap-a1b2c3d4.local:8787',
@@ -424,13 +423,19 @@ test('/api/phone-url exposes stableUrl while preserving direct IP primaryUrl and
   const stableResponse = await fetch(`${origin}/api/phone-url`).then((response) => response.json());
   assert.equal(stableResponse.stableUrl, status.stableUrl);
   assert.equal(stableResponse.primaryUrl, 'http://192.168.1.25:8787');
-  assert.deepEqual(stableResponse.urls, status.lanUrls);
+  assert.deepEqual(stableResponse.urls, [status.lanUrls[0]]);
 
   status = { port: 8787, stableUrl: '', lanUrls: [] };
   const fallbackResponse = await fetch(`${origin}/api/phone-url`).then((response) => response.json());
   assert.equal(fallbackResponse.stableUrl, '');
-  assert.doesNotMatch(fallbackResponse.primaryUrl, /\.local(?::|$)/);
-  assert.equal(fallbackResponse.urls.length, 1);
+  assert.equal(fallbackResponse.primaryUrl, '');
+  assert.equal(fallbackResponse.urls.length, 0);
+  status = {
+    port: 8787, stableUrl: 'http://snap-a1b2c3d4.local:8787',
+    lanUrls: [{ address: '26.10.20.30', private: true, url: 'http://26.10.20.30:8787' }],
+  };
+  const vpnResponse = await fetch(`${origin}/api/phone-url`).then((response) => response.json());
+  assert.deepEqual(vpnResponse, { port: 8787, stableUrl: '', primaryUrl: '', urls: [] });
 });
 
 test('Electron phone setup prefers stableUrl and diagnostics retain raw LAN details', () => {
@@ -440,7 +445,7 @@ test('Electron phone setup prefers stableUrl and diagnostics retain raw LAN deta
   );
   assert.match(rendererSource, /addDiagnosticRow\('Device ID', data\.deviceId/);
   assert.match(rendererSource, /addDiagnosticRow\('\.local hostname', data\.hostname/);
-  assert.match(rendererSource, /renderUrlList\(diagnosticsUrls, 'Detected LAN URLs', data\.lanUrls \|\| \[\]\)/);
+  assert.match(rendererSource, /renderUrlList\(diagnosticsUrls, 'Detected LAN URLs',[\s\S]*?isPrivateLanUrl\(item.url\)/);
 });
 
 test('server status exposes persistent identity and cleanly stops successful mDNS', async () => {

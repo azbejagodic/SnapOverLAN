@@ -213,6 +213,19 @@ serverManager = createServerManager({
   isQuitting: () => allowQuit,
   onAutoCopyUnavailable: (message) => sendAutoCopyResult({ status: 'failed', message }),
   onMessage: (serverProcess, message) => autoCopyController.handleServerMessage(serverProcess, message),
+  onUploadDrainTimeout: async ({ signal }) => {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Upload is still in progress',
+      message: 'SnapOverLAN has been waiting 5 minutes for an upload to finish. The connection may have been interrupted.',
+      buttons: ['Keep waiting', 'Continue anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      signal,
+    });
+    return response === 1 ? 'continue' : 'wait';
+  },
   onStateChanged: handleServerStateChanged,
   port: PORT,
   projectRoot,

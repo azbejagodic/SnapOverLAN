@@ -519,7 +519,7 @@ test('auto-copy uses one validated owned-server IPC path and never gallery refre
 test('verified reused servers are replaced by one owned child when auto-copy is enabled', () => {
   assert.match(
     desktopServerManagerSource,
-    /identity\?\.kind !== 'current'[\s\S]*?identity\.shutdownToken[\s\S]*?postServerShutdown\(identity\.shutdownToken\)/,
+    /identity\?\.kind !== 'current'[\s\S]*?identity\.shutdownToken[\s\S]*?drainReusedServer\(identity\)/,
   );
   assert.match(
     desktopServerManagerSource,

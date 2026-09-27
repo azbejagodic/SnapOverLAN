@@ -5,6 +5,7 @@
 
 !ifndef BUILD_UNINSTALLER
 !include "${__FILEDIR__}\update-progress-ui.nsh"
+!include "${__FILEDIR__}\update-progress-lifetime.nsh"
 
 !macro customHeader
   Var SnapOverLANUpdateProgressVisible
@@ -13,6 +14,18 @@
   ; leaves its modeless update-progress window behind.
   Function .onGUIEnd
     !insertmacro closeSnapOverLANUpdateProgress
+    !insertmacro cleanupSnapOverLANUpdateReadiness
+  FunctionEnd
+
+  ; In silent mode NSIS calls success after the install section, including
+  ; builder's --force-run StartApp. .onGUIEnd is not the silent success hook.
+  Function .onInstSuccess
+    !insertmacro finishSnapOverLANUpdateProgress
+  FunctionEnd
+
+  Function .onInstFailed
+    !insertmacro closeSnapOverLANUpdateProgress
+    !insertmacro cleanupSnapOverLANUpdateReadiness
   FunctionEnd
 !macroend
 
@@ -92,9 +105,13 @@
   ; Launch the same installed executable directly in both Finish and update flows.
   StrCpy $launchLink "$appExe"
 
-  ; customInstall runs after application extraction, shortcut creation, registry
-  ; writes, and the firewall work above, immediately before Builder relaunches.
-  !insertmacro closeSnapOverLANUpdateProgress
+  ; Do not destroy Banner before builder's automatic relaunch. Arm observation
+  ; now; .onInstSuccess waits for the newly launched main window or timeout.
+  ${If} ${isUpdated}
+  ${AndIf} ${Silent}
+  ${AndIf} ${isForceRun}
+    !insertmacro prepareSnapOverLANUpdateReadiness "$appExe"
+  ${EndIf}
 !macroend
 
 !macro customUnInstall

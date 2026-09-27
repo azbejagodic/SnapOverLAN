@@ -107,6 +107,27 @@ test('NSIS owns update progress only for the --updated installer path', async ()
   const outsideUpdateBranch = customInit.replace(/\$\{If\} \$\{isUpdated\}[\s\S]*?\$\{EndIf\}/, '');
   assert.doesNotMatch(outsideUpdateBranch, /Banner::show/);
   assert.match(customInstall, /StrCpy \$launchLink "\$appExe"/);
-  assert.match(customInstall, /!insertmacro closeSnapOverLANUpdateProgress/);
+  assert.doesNotMatch(customInstall, /!insertmacro closeSnapOverLANUpdateProgress/);
+  assert.match(customInstall, /\$\{If\} \$\{isUpdated\}\s+\$\{AndIf\} \$\{Silent\}\s+\$\{AndIf\} \$\{isForceRun\}\s+!insertmacro prepareSnapOverLANUpdateReadiness "\$appExe"/);
+  assert.match(source, /Function \.onInstSuccess\s+!insertmacro finishSnapOverLANUpdateProgress/);
+  assert.match(source, /Function \.onInstFailed\s+!insertmacro closeSnapOverLANUpdateProgress/);
   assert.match(source, /Function \.onGUIEnd\r?\n\s*!insertmacro closeSnapOverLANUpdateProgress/);
+});
+
+test('the installed builder launches before NSIS success and readiness is bounded', async () => {
+  const templates = path.join(projectRoot, 'node_modules/app-builder-lib/templates/nsis');
+  const install = await fs.readFile(path.join(templates, 'installSection.nsh'), 'utf8');
+  const common = await fs.readFile(path.join(templates, 'common.nsh'), 'utf8');
+  assert.ok(install.indexOf('!insertmacro customInstall') < install.lastIndexOf('!insertmacro doStartApp'));
+  assert.match(install, /\$\{if\} \$\{isForceRun\}\s+\$\{andIf\} \$\{Silent\}\s+!insertmacro doStartApp/);
+  assert.match(common, /!macro StartApp[\s\S]*StrCpy \$startAppArgs "--updated"[\s\S]*\$\{StdUtils.ExecShellAsUser\}/);
+  const lifetime = await fs.readFile(path.join(projectRoot, 'build/update-progress-lifetime.nsh'), 'utf8');
+  assert.match(lifetime, /!define SNAPOVERLAN_UPDATE_READY_TIMEOUT 90000/);
+  const finish = lifetime.slice(lifetime.indexOf('!macro finishSnapOverLANUpdateProgress'));
+  assert.ok(finish.indexOf('::$SnapOverLANUpdateWaitForReady') < finish.indexOf('!insertmacro closeSnapOverLANUpdateProgress'));
+  assert.doesNotMatch(lifetime, /\bSleep\b|\bShowWindow\b/);
+  const shell = await fs.readFile(path.join(projectRoot, 'app/desktop/shell.js'), 'utf8');
+  const main = await fs.readFile(path.join(projectRoot, 'app/main.js'), 'utf8');
+  assert.match(shell, /await mainWindow\.loadFile/);
+  assert.match(main, /await desktopShell\.createWindow\(\);[\s\S]*desktopShell\.showMainWindow\(\);/);
 });

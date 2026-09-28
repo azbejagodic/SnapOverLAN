@@ -15,7 +15,6 @@ const createServerManager = ({
   isQuitting,
   onAutoCopyUnavailable,
   onMessage,
-  onUploadDrainTimeout,
   onStateChanged,
   port,
   projectRoot,
@@ -66,11 +65,11 @@ const createServerManager = ({
     serverProcess.once('exit', handleExit);
   });
 
-  const drainOwnedServer = (serverProcess) => waitForUploadDrain({
-    askToContinue: onUploadDrainTimeout,
+  const drainOwnedServer = (serverProcess, onlyIfIdle = false) => waitForUploadDrain({
     subscribe: (observer) => {
       const message = (value) => {
         if (value?.type === 'snapoverlan:drain-state') observer.state(value);
+        if (value?.type === 'snapoverlan:shutdown-blocked') observer.blocked();
       };
       const disconnected = () => observer.error(new Error('Server shutdown IPC disconnected.'));
       serverProcess.on('message', message);
@@ -83,15 +82,12 @@ const createServerManager = ({
         serverProcess.removeListener('disconnect', disconnected);
       };
     },
-    start: () => serverProcess.send({ type: 'snapoverlan:shutdown' }),
-    decide: (decision) => serverProcess.send({ type: 'snapoverlan:drain-decision', ...decision }),
+    start: () => { serverProcess.send({ type: 'snapoverlan:shutdown', onlyIfIdle }); },
   });
 
-  const drainReusedServer = (identity) => waitForUploadDrain({
-    askToContinue: onUploadDrainTimeout,
+  const drainReusedServer = (identity, onlyIfIdle = false) => waitForUploadDrain({
     subscribe: (observer) => client.watchServerShutdown(identity.shutdownToken, observer),
-    start: () => client.postServerShutdown(identity.shutdownToken),
-    decide: (decision) => client.postServerShutdown(identity.shutdownToken, decision),
+    start: () => client.postServerShutdown(identity.shutdownToken, { onlyIfIdle }),
   });
 
   const detachOwnedServerMessageListener = (serverProcess) => {
@@ -104,7 +100,7 @@ const createServerManager = ({
   const attachOwnedServerMessageListener = (serverProcess) => {
     detachOwnedServerMessageListener(serverProcess);
     const listener = (message) => {
-      if (message?.type === 'snapoverlan:drain-state') return;
+      if (['snapoverlan:drain-state', 'snapoverlan:shutdown-blocked', 'snapoverlan:shutdown-accepted'].includes(message?.type)) return;
       onMessage(serverProcess, message).catch((error) => {
         console.warn('Could not handle upload completion event:', error);
       });
@@ -247,7 +243,7 @@ const createServerManager = ({
       ownedServerProcess = null;
       if (getAutoCopyEnabled()) autoCopyUnavailableReason = 'Auto-copy is waiting for the local server.';
       verifiedShutdownToken = '';
-      if (serverState !== 'stopping' && !isQuitting()) {
+      if (serverState !== 'stopping' && serverOperationType !== 'stop' && !isQuitting()) {
         const error = `Server process exited unexpectedly (${signal || code}).`;
         console.error(error);
         setState('error', error);
@@ -304,7 +300,7 @@ const createServerManager = ({
     return serverOperation;
   };
 
-  const stopServerInternal = async () => {
+  const stopServerInternal = async ({ onlyIfIdle = false } = {}) => {
     const serverProcess = ownedServerProcess;
     const identity = serverProcess
       ? null
@@ -332,14 +328,17 @@ const createServerManager = ({
       throw new Error(error);
     }
 
-    setState('stopping');
+    if (onlyIfIdle && serverProcess && !serverProcess.connected) throw new Error('Cannot safely request shutdown without server IPC.');
+    if (!onlyIfIdle) setState('stopping');
     let exited = false;
     let forced = false;
     if (serverProcess?.connected) {
-      await drainOwnedServer(serverProcess);
+      if (await drainOwnedServer(serverProcess, onlyIfIdle) === false) return { ...getState(), uploadBlocked: true };
+      setState('stopping');
       exited = await waitForProcessExit(serverProcess, SERVER_STOP_TIMEOUT_MS);
     } else if (identity?.shutdownToken) {
-      await drainReusedServer(identity);
+      if (await drainReusedServer(identity, onlyIfIdle) === false) return { ...getState(), uploadBlocked: true };
+      setState('stopping');
       exited = await client.waitForPortRelease(SERVER_STOP_TIMEOUT_MS);
     }
     if (!exited && serverProcess?.exitCode === null) {
@@ -363,13 +362,13 @@ const createServerManager = ({
     return getState();
   };
 
-  const stop = () => {
+  const stop = (options) => {
     if (serverOperation) {
       if (serverOperationType === 'stop') return serverOperation;
-      return serverOperation.then(() => stop());
+      return serverOperation.then(() => stop(options));
     }
     serverOperationType = 'stop';
-    const operation = stopServerInternal().finally(() => {
+    const operation = stopServerInternal(options).finally(() => {
       if (serverOperation === operation) {
         serverOperation = null;
         serverOperationType = '';

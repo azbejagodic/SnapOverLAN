@@ -281,6 +281,48 @@ test('an explicit installation failure keeps the sanitized native error fallback
   assert.equal(dialog.calls[0][0].detail, 'Please restart SnapOverLAN and try again.');
 });
 
+test('blocked Restart keeps the same window open, suppresses overlapping clicks, and retries only on another click', async () => {
+  let activeUpload = true;
+  let warnings = 0;
+  let installs = 0;
+  let dismiss;
+  let window;
+  const { controller, dialog } = createController({
+    requestInstall: async (parent) => {
+      assert.equal(parent, window);
+      assert.equal(window.isDestroyed(), false);
+      if (activeUpload) {
+        warnings += 1;
+        await new Promise((resolve) => { dismiss = resolve; });
+        return 'upload-blocked';
+      }
+      installs += 1;
+      return true;
+    },
+  });
+  const prompt = controller.handleState(downloadedState());
+  window = await waitForWindow();
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    choose(window, 'restart');
+    choose(window, 'restart');
+    assert.equal(warnings, attempt);
+    assert.equal(window.isDestroyed(), false);
+    assert.equal(installs, 0);
+    dismiss();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(window.isDestroyed(), false);
+    assert.equal(dialog.calls.length, 0, 'a blocked upload is not an installation error');
+  }
+  activeUpload = false;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(installs, 0, 'finishing an upload must not auto-install');
+  choose(window, 'restart');
+  assert.equal(await prompt, true);
+  assert.equal(installs, 1);
+  assert.equal(window.isDestroyed(), true);
+  assert.equal(FakeBrowserWindow.instances.length, 1);
+});
+
 test('ordinary checking, updater errors, and unsafe versions never create a window', async () => {
   const { controller } = createController();
 

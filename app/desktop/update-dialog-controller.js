@@ -96,6 +96,7 @@ const createUpdateDialogController = ({
     const parent = getVisibleMainWindow();
     let updateWindow;
     let settled = false;
+    let requestingInstall = false;
 
     const settle = (response, closeWindow = true) => {
       if (settled) return;
@@ -123,14 +124,29 @@ const createUpdateDialogController = ({
       updateWindow.webContents.on('will-navigate', (event) => event.preventDefault());
       updateWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
       updateWindow.webContents.on('ipc-message', (_event, channel, action) => {
-        if (channel !== UPDATE_DIALOG_ACTION_CHANNEL) return;
+        if (channel !== UPDATE_DIALOG_ACTION_CHANNEL || settled || requestingInstall) return;
         if (action === 'later') settle(0);
-        if (action === 'restart') settle(1);
+        if (action === 'restart') {
+          requestingInstall = true;
+          void (async () => {
+            let result;
+            try { result = await requestInstall?.(updateWindow); }
+            catch { warn('The update installation request failed.'); }
+            if (result === 'upload-blocked') return;
+            installStarted = result === true;
+            requestingInstall = false;
+            settle(installStarted ? 1 : 0);
+            if (!installStarted) await showInstallError();
+          })().finally(() => { requestingInstall = false; });
+        }
       });
       updateWindow.once('ready-to-show', () => {
         if (disposed || updateWindow.isDestroyed()) return;
         updateWindow.show();
         updateWindow.focus();
+      });
+      updateWindow.on('close', (event) => {
+        if (requestingInstall) event.preventDefault();
       });
       updateWindow.once('closed', () => settle(0, false));
       Promise.resolve(updateWindow.loadFile(rendererPath, {
@@ -159,17 +175,7 @@ const createUpdateDialogController = ({
     promptedVersions.add(version);
     const operation = Promise.resolve()
       .then(() => showReadyWindow(version))
-      .then(async (result) => {
-        if (result?.response !== 1) return false;
-
-        try {
-          installStarted = await requestInstall?.() === true;
-        } catch {
-          warn('The update installation request failed.');
-        }
-        if (!installStarted) await showInstallError();
-        return installStarted;
-      })
+      .then((result) => result?.response === 1)
       .catch(() => {
         warn('The update-ready dialog could not be shown.');
         return false;

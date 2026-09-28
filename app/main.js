@@ -132,9 +132,9 @@ const initializeUpdateManager = () => {
       logger: {
         warn: (message) => console.warn('SnapOverLAN updater:', message),
       },
-      requestInstall: () => (
+      requestInstall: (parent) => (
         updateManager?.isInstallationReady()
-          ? requestQuit({ installUpdate: true })
+          ? requestQuit({ installUpdate: true, warningParent: parent })
           : false
       ),
     });
@@ -206,6 +206,22 @@ autoCopyController = createAutoCopyController({
   setEnabled: (enabled) => setAutoCopyFirstPhoto(enabled),
 });
 
+const showUploadBlockedWarning = async ({ installUpdate = false, parent = desktopShell?.getMainWindow() } = {}) => {
+  const options = {
+    type: 'warning',
+    title: 'Upload in progress',
+    message: installUpdate
+      ? 'An upload is still in progress. Wait for it to finish before restarting and updating SnapOverLAN.'
+      : 'An upload is still in progress. Wait for it to finish before closing SnapOverLAN.',
+    buttons: ['OK'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  if (parent && !parent.isDestroyed()) await dialog.showMessageBox(parent, options);
+  else await dialog.showMessageBox(options);
+};
+
 serverManager = createServerManager({
   electronApp,
   getAutoCopyEnabled: () => autoCopyFirstPhoto,
@@ -213,19 +229,6 @@ serverManager = createServerManager({
   isQuitting: () => allowQuit,
   onAutoCopyUnavailable: (message) => sendAutoCopyResult({ status: 'failed', message }),
   onMessage: (serverProcess, message) => autoCopyController.handleServerMessage(serverProcess, message),
-  onUploadDrainTimeout: async ({ signal }) => {
-    const { response } = await dialog.showMessageBox({
-      type: 'warning',
-      title: 'Upload is still in progress',
-      message: 'SnapOverLAN has been waiting 5 minutes for an upload to finish. The connection may have been interrupted.',
-      buttons: ['Keep waiting', 'Continue anyway'],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      signal,
-    });
-    return response === 1 ? 'continue' : 'wait';
-  },
   onStateChanged: handleServerStateChanged,
   port: PORT,
   projectRoot,
@@ -235,7 +238,7 @@ serverManager = createServerManager({
 });
 
 const startServer = () => serverManager.start();
-const stopServer = () => serverManager.stop();
+const stopServer = () => serverManager.stop({ onlyIfIdle: true });
 
 desktopShell = createDesktopShell({
   BrowserWindow,
@@ -316,7 +319,7 @@ async function setAutoCopyFirstPhoto(enabled) {
   return autoCopyFirstPhoto;
 }
 
-async function requestQuit({ installUpdate = false } = {}) {
+async function requestQuit({ installUpdate = false, warningParent } = {}) {
   if (quitOperation) {
     return quitOperation;
   }
@@ -330,12 +333,14 @@ async function requestQuit({ installUpdate = false } = {}) {
     }
     if (serverManager.isRunning()) {
       try {
-        await stopServer();
+        const result = await stopServer();
+        if (result?.uploadBlocked) {
+          await showUploadBlockedWarning({ installUpdate, parent: warningParent });
+          return installUpdate ? 'upload-blocked' : false;
+        }
       } catch (error) {
         console.error('Could not stop the SnapOverLAN server during quit:', error);
-        if (installUpdate) {
-          return false;
-        }
+        return false;
       }
     }
     desktopShell.destroyTray();
@@ -354,7 +359,7 @@ async function requestQuit({ installUpdate = false } = {}) {
   })();
   quitOperation = operation;
   const result = await operation;
-  if (!result && quitOperation === operation) {
+  if (result !== true && quitOperation === operation) {
     quitOperation = null;
   }
   return result;

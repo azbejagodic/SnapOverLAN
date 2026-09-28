@@ -120,7 +120,7 @@ const app = createServerApp({
   getAutoCopySetting: () => requestAutoCopySettingFromParent('get'),
   getServerStatus,
   isLoopbackRequest,
-  onShutdown: (reason) => shutdownServer(reason),
+  onShutdown: (reason, options) => shutdownServer(reason, options),
   onUploadCompleted: sendUploadCompletedToParent,
   setAutoCopySetting: (enabled) => requestAutoCopySettingFromParent('set', enabled),
 });
@@ -213,8 +213,9 @@ const watchParentProcess = () => {
   parentWatchTimer.unref();
 };
 
-const shutdownServer = (reason) => {
-  const uploadsDrained = uploadLifecycle.beginDrain();
+const shutdownServer = (reason, { onlyIfIdle = false } = {}) => {
+  const uploadsDrained = uploadLifecycle.beginDrain({ onlyIfIdle });
+  if (!uploadsDrained) return false;
   if (shutdownPromise) {
     return shutdownPromise;
   }
@@ -252,17 +253,14 @@ if (isDirectRun) {
   watchParentProcess();
   process.once('SIGINT', () => shutdownServer('SIGINT'));
   process.once('SIGTERM', () => shutdownServer('SIGTERM'));
+  process.once('disconnect', () => shutdownServer('parent-disconnected'));
   process.on('message', (message) => {
-    if (message?.type === 'snapoverlan:drain-decision') {
-      uploadLifecycle.decideDrain(message);
-      return;
-    }
     if (handleAutoCopySettingResponse(message)) {
       return;
     }
     if (message?.type === 'snapoverlan:shutdown') {
-      shutdownServer('electron-ipc');
-      process.send?.({ type: 'snapoverlan:shutdown-accepted' });
+      const accepted = shutdownServer('electron-ipc', { onlyIfIdle: message.onlyIfIdle === true });
+      process.send?.({ type: accepted === false ? 'snapoverlan:shutdown-blocked' : 'snapoverlan:shutdown-accepted' }, () => {});
     }
   });
   startServer().catch((err) => {

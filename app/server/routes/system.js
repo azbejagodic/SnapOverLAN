@@ -44,12 +44,11 @@ const createSystemRouter = ({
     sendState(drainLifecycle.getDrainState());
   });
   router.post('/server-shutdown', authorizeShutdown, (req, res) => {
-    if (req.body?.decision !== undefined) {
-      if (!drainLifecycle.decideDrain(req.body)) { res.sendStatus(409); return; }
-      res.status(202).json({ stopping: true });
+    const accepted = onShutdown('localhost-control', { onlyIfIdle: req.body?.onlyIfIdle === true });
+    if (accepted === false) {
+      res.status(409).json({ error: 'upload-active' });
       return;
     }
-    onShutdown('localhost-control');
     res.status(202).json({ stopping: true });
   });
   router.get('/auto-copy', async (req, res) => {

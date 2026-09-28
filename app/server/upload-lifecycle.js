@@ -1,4 +1,4 @@
-const UPLOAD_DRAIN_TIMEOUT_MS = 5 * 60 * 1000;
+const UPLOAD_DRAIN_TIMEOUT_MS = 60 * 1000;
 
 const createUploadLifecycle = ({ timeoutMs = UPLOAD_DRAIN_TIMEOUT_MS, logger = console } = {}) => {
   const status = {
@@ -22,19 +22,11 @@ const createUploadLifecycle = ({ timeoutMs = UPLOAD_DRAIN_TIMEOUT_MS, logger = c
     clearTimeout(drainTimer);
     drainTimer = setTimeout(() => {
       drainTimer = null;
-      logger.warn(`Upload drain timed out after ${timeoutMs} ms; waiting for a shutdown decision.`);
-      publish('decision');
+      logger.warn(`Upload drain timed out after ${timeoutMs} ms; continuing shutdown.`);
+      finishDrain('continue');
     }, timeoutMs);
     publish('waiting');
   };
-  const decideDrain = ({ revision, decision } = {}) => {
-    if (drainState.phase !== 'decision' || revision !== drainState.revision) return false;
-    if (decision === 'wait') startDrainTimer();
-    else if (decision === 'continue') finishDrain('continue');
-    else return false;
-    return true;
-  };
-
   const markUploadStarted = (req, res, next) => {
     // Admission and counting are synchronous: shutdown cannot interleave between them.
     if (status.draining) {
@@ -67,8 +59,10 @@ const createUploadLifecycle = ({ timeoutMs = UPLOAD_DRAIN_TIMEOUT_MS, logger = c
     next();
   };
 
-  const beginDrain = () => {
-    // Close admission before checking the count, yielding, or acknowledging shutdown.
+  const beginDrain = ({ onlyIfIdle = false } = {}) => {
+    // Check and close admission synchronously in the same server event-loop turn.
+    // A blocked user request must not mutate admission, state, or timers.
+    if (onlyIfIdle && status.activeUploads > 0) return null;
     status.draining = true;
     if (drainPromise) return drainPromise;
     if (status.activeUploads === 0) {
@@ -90,7 +84,7 @@ const createUploadLifecycle = ({ timeoutMs = UPLOAD_DRAIN_TIMEOUT_MS, logger = c
   };
 
   return {
-    status, markUploadStarted, beginDrain, decideDrain,
+    status, markUploadStarted, beginDrain,
     getDrainState: () => drainState,
     subscribeDrain: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
   };

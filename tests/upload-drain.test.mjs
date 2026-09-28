@@ -29,6 +29,72 @@ const beginUpload = (lifecycle) => {
   return res;
 };
 
+const serverSource = await source('server/index.js');
+const makeShutdownHarness = (lifecycle) => {
+  const events = [];
+  const fakeProcess = new EventEmitter();
+  Object.assign(fakeProcess, {
+    env: { SNAPOVERLAN_PARENT_PID: '123' }, connected: false,
+    exit: (code) => events.push(`exit:${code}`),
+    kill: () => { throw Object.assign(new Error('parent gone'), { code: 'ESRCH' }); },
+  });
+  const context = {
+    uploadLifecycle: lifecycle, shutdownPromise: null, parentWatchTimer: null, console,
+    process: fakeProcess, setInterval, clearInterval,
+    appendStartupLog: async () => events.push('log'),
+    stopServer: async () => events.push('close'),
+    startServer: async () => {}, handleAutoCopySettingResponse: () => false,
+  };
+  const shutdownSource = serverSource.slice(serverSource.indexOf('const watchParentProcess ='),
+    serverSource.indexOf('const isDirectRun ='));
+  const handlers = serverSource.slice(serverSource.indexOf('if (isDirectRun) {'), serverSource.indexOf('\nexport {'));
+  const shutdown = runInNewContext(`${shutdownSource}\nconst isDirectRun = true;\n${handlers}\nshutdownServer`, context);
+  return { events, fakeProcess, shutdown };
+};
+
+for (const trigger of ['SIGINT', 'SIGTERM', 'disconnect', 'parent-exited', 'server-only']) {
+  for (const phase of ['fresh', 'waiting']) {
+    test(`${trigger} during ${phase} cannot leave shutdown waiting for a dialog`, async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+      const lifecycle = createUploadLifecycle({ logger: { warn() {} } });
+      beginUpload(lifecycle);
+      const { events, fakeProcess, shutdown } = makeShutdownHarness(lifecycle);
+      if (phase !== 'fresh') shutdown('electron-ipc');
+      if (phase === 'waiting') {
+        fakeProcess.kill = () => {};
+        t.mock.timers.tick(10000);
+      }
+      if (trigger === 'parent-exited') {
+        fakeProcess.kill = () => { throw Object.assign(new Error('parent gone'), { code: 'ESRCH' }); };
+        t.mock.timers.tick(2000);
+      } else if (trigger === 'server-only') shutdown(trigger);
+      else fakeProcess.emit(trigger);
+      assert.equal(lifecycle.status.draining, true);
+      // A later user-controlled request cannot restore an indefinite decision wait.
+      const pending = shutdown('electron-ipc');
+      if (phase !== 'decision') {
+        const remaining = phase === 'waiting' ? 50000 : 60000;
+        t.mock.timers.tick(remaining - (trigger === 'parent-exited' && phase === 'waiting' ? 2000 : 0) - 1);
+        await flush();
+        assert.deepEqual(events, []);
+        t.mock.timers.tick(1);
+      }
+      await pending;
+      assert.deepEqual(events, ['log', 'close', 'exit:0']);
+      assert.equal(lifecycle.getDrainState().phase, 'ready');
+    });
+  }
+}
+
+test('server-only shutdown with no uploads exits without advancing time', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const lifecycle = createUploadLifecycle();
+  const { shutdown, events } = makeShutdownHarness(lifecycle);
+  await shutdown('server-only');
+  assert.equal(lifecycle.status.draining, true);
+  assert.deepEqual(events, ['log', 'close', 'exit:0']);
+});
+
 test('concurrent uploads finish exactly once and draining waits for both', async () => {
   const lifecycle = createUploadLifecycle();
   const a = beginUpload(lifecycle);
@@ -93,139 +159,48 @@ for (const count of [0, 1]) {
   });
 }
 
-test('server drain timeout requires a decision and duplicate requests do not restart the five-minute limit', async (t) => {
+test('production emergency timeout is 60 seconds and duplicate requests preserve the deadline', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const warnings = [];
-  const lifecycle = createUploadLifecycle({ logger: { warn: (message) => warnings.push(message) } });
-  const active = beginUpload(lifecycle);
-  const drain = lifecycle.beginDrain();
-  let stopped = false;
-  drain.then(() => { stopped = true; });
-  t.mock.timers.tick(UPLOAD_DRAIN_TIMEOUT_MS - 1);
-  await Promise.resolve();
-  assert.equal(stopped, false);
-  assert.equal(lifecycle.beginDrain(), drain);
-  t.mock.timers.tick(1);
-  await Promise.resolve();
-  assert.equal(stopped, false);
-  assert.equal(lifecycle.getDrainState().phase, 'decision');
-  lifecycle.decideDrain({ ...lifecycle.getDrainState(), decision: 'continue' });
-  assert.equal(await drain, 'continue');
-  assert.equal(stopped, true);
-  assert.equal(UPLOAD_DRAIN_TIMEOUT_MS, 300000);
-  assert.match(warnings[0], /timed out after 300000 ms/);
-  assert.equal(lifecycle.status.draining, true);
-  active.emit('finish');
-  active.emit('close');
-  assert.equal(lifecycle.status.activeUploads, 0);
-});
-
-test('the real server shutdown function waits for the drain timeout before closing sockets', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+  assert.equal(UPLOAD_DRAIN_TIMEOUT_MS, 60000);
   const lifecycle = createUploadLifecycle({ logger: { warn() {} } });
   beginUpload(lifecycle);
-  const serverSource = await source('server/index.js');
-  const shutdownSource = serverSource.slice(serverSource.indexOf('const shutdownServer ='),
-    serverSource.indexOf('const isDirectRun ='));
-  const events = [];
-  const shutdown = runInNewContext(`${shutdownSource}\nshutdownServer`, {
-    uploadLifecycle: lifecycle, shutdownPromise: null, parentWatchTimer: null, console,
-    appendStartupLog: async () => events.push('log'),
-    stopServer: async () => events.push('close'),
-    process: { connected: false, exit: (code) => events.push(`exit:${code}`) },
-  });
-  const pending = shutdown('electron-ipc');
-  assert.equal(lifecycle.status.draining, true);
-  assert.equal(shutdown('localhost-control'), pending);
-  t.mock.timers.tick(UPLOAD_DRAIN_TIMEOUT_MS - 1);
-  await Promise.resolve();
-  assert.deepEqual(events, []);
+  const pending = lifecycle.beginDrain();
+  t.mock.timers.tick(59999);
+  assert.equal(lifecycle.getDrainState().phase, 'waiting');
+  assert.equal(lifecycle.beginDrain(), pending);
   t.mock.timers.tick(1);
-  await Promise.resolve();
-  assert.deepEqual(events, []);
-  lifecycle.decideDrain({ ...lifecycle.getDrainState(), decision: 'continue' });
+  assert.equal(await pending, 'continue');
+  assert.equal(lifecycle.getDrainState().phase, 'ready');
+});
+
+test('headless shutdown completes early when the last upload finishes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const lifecycle = createUploadLifecycle();
+  const active = beginUpload(lifecycle);
+  const { shutdown, events } = makeShutdownHarness(lifecycle);
+  const pending = shutdown('SIGTERM');
+  active.emit('finish');
   await pending;
   assert.deepEqual(events, ['log', 'close', 'exit:0']);
 });
 
-for (const installUpdate of [false, true]) {
-  test(`${installUpdate ? 'Restart & Update' : 'normal quit'} sends owned shutdown then waits on the same cleanup path`, async () => {
-    const lifecycle = createUploadLifecycle();
-    const active = beginUpload(lifecycle);
-    const events = [];
-    const waitTimeouts = [];
-    const child = new EventEmitter();
-    child.exitCode = null;
-    child.connected = true;
-    child.kill = () => events.push('kill');
-    child.send = () => {
-      events.push('ipc');
-      lifecycle.beginDrain().then(() => { child.exitCode = 0; child.emit('exit', 0); });
-    };
-    let spawned = false;
-    const createManager = runInNewContext(`${managerSource}\ncreateServerManager`, {
-      console, path, process, clearTimeout, waitForUploadDrain,
-      setTimeout: (callback, ms) => { waitTimeouts.push(ms); return setTimeout(callback, ms); },
-      spawn: () => { spawned = true; return child; },
-      createServerClient: () => ({
-        getServerIdentity: async () => spawned ? { shutdownToken: 'a'.repeat(64) } : null,
-        isPortInUse: async () => false,
-      }),
-    });
-    const manager = createManager({
-      electronApp: { isPackaged: false }, getAutoCopyEnabled: () => false,
-      getStartupLogPath: () => '', isQuitting: () => true,
-      onStateChanged() {}, writeStartupLog: async () => {},
-      projectRoot: '.', serverPath: 'app/server/index.js',
-    });
-    await manager.start();
-    const context = {
-      console, quitOperation: null, allowQuit: false, serverManager: manager,
-      stopServer: () => manager.stop(),
-      desktopShell: { destroyTray: () => events.push('tray') },
-      electronApp: { quit: () => events.push('quit') },
-      updateManager: { installDownloadedUpdate: () => { events.push('install'); return true; } },
-    };
-    const quit = runInNewContext(`${quitSource}\nrequestQuit`, context);
-    const pending = quit({ installUpdate });
-    await flush();
-    assert.equal(lifecycle.status.draining, true);
-    assert.deepEqual(events, ['ipc']);
-    assert.deepEqual(waitTimeouts, [], 'the desktop must not force a stop while the server is draining');
-    assert.equal(context.allowQuit, false);
-    active.emit('finish');
-    assert.equal(await pending, true);
-    assert.deepEqual(events, ['ipc', 'tray', installUpdate ? 'install' : 'quit']);
-  });
-}
-
-test('verified localhost shutdown is requested before waiting for the single server drain period', async () => {
-  const lifecycle = createUploadLifecycle();
-  const active = beginUpload(lifecycle);
-  const events = [];
-  const createManager = runInNewContext(`${managerSource}\ncreateServerManager`, {
-    console, waitForUploadDrain,
-    createServerClient: () => ({
-      getServerIdentity: async () => ({ kind: 'current', shutdownToken: 'a'.repeat(64) }),
-      watchServerShutdown: async (_token, observer) => lifecycle.subscribeDrain(observer.state),
-      postServerShutdown: async () => { lifecycle.beginDrain(); events.push('request'); },
-      waitForPortRelease: async (timeoutMs) => {
-        events.push('wait');
-        assert.equal(timeoutMs, 1000);
-        await lifecycle.beginDrain();
-        return true;
-      },
-    }),
-  });
-  const manager = createManager({ onStateChanged() {}, writeStartupLog: async () => {} });
-  const pending = manager.stop();
-  await flush();
-  assert.equal(lifecycle.status.draining, true);
-  assert.deepEqual(events, ['request']);
-  assert.equal(manager.getState().state, 'stopping');
-  active.emit('finish');
-  await pending;
-  assert.equal(manager.getState().state, 'offline');
+test('idle-only shutdown atomically rejects active uploads without state changes or timers', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const lifecycle = createUploadLifecycle({ logger: { warn() { assert.fail('timer started'); } } });
+  const a = beginUpload(lifecycle);
+  const before = JSON.stringify(lifecycle.status);
+  assert.equal(lifecycle.beginDrain({ onlyIfIdle: true }), null);
+  assert.equal(JSON.stringify(lifecycle.status), before);
+  assert.equal(lifecycle.getDrainState().phase, 'idle');
+  const b = beginUpload(lifecycle);
+  a.emit('finish');
+  assert.equal(lifecycle.beginDrain({ onlyIfIdle: true }), null);
+  t.mock.timers.tick(120000);
+  b.emit('finish');
+  assert.equal(await lifecycle.beginDrain({ onlyIfIdle: true }), 'idle');
+  let rejected;
+  lifecycle.markUploadStarted({}, { status: (code) => { rejected = code; return { json() {} }; } }, () => assert.fail('admitted after shutdown accepted'));
+  assert.equal(rejected, 503);
 });
 
 const until = async (check) => {
@@ -288,6 +263,28 @@ for (const transport of ['ipc', 'localhost']) {
     const denied = await fetch(`${url}/server-shutdown`, { method: 'POST', headers: { 'x-snapoverlan-shutdown-token': 'wrong' } });
     assert.equal(denied.status, 404);
     assert.equal((await status()).draining, false);
+    if (transport === 'ipc') {
+      const blocked = new Promise((resolve) => {
+        const listener = (message) => {
+          if (message.type !== 'snapoverlan:shutdown-blocked') return;
+          child.removeListener('message', listener);
+          resolve();
+        };
+        child.on('message', listener);
+      });
+      child.send({ type: 'snapoverlan:shutdown', onlyIfIdle: true });
+      await blocked;
+    } else {
+      const control = await fetch(`${url}/server-control`).then((res) => res.json());
+      const blocked = await fetch(`${url}/server-shutdown`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-snapoverlan-shutdown-token': control.shutdownToken },
+        body: JSON.stringify({ onlyIfIdle: true }),
+      });
+      assert.equal(blocked.status, 409);
+    }
+    assert.equal((await status()).draining, false, 'user shutdown rejection never locks admission');
+    assert.equal(child.exitCode, null);
     if (transport === 'ipc') {
       const accepted = new Promise((resolve) => child.on('message', (msg) => {
         if (msg.type === 'snapoverlan:shutdown-accepted') resolve();

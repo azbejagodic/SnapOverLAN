@@ -231,7 +231,7 @@ test('updater initialization starts after the visible desktop is ready and canno
   assert.match(mainSource, /updateManagerInitialization = \(async \(\) => \{[\s\S]*?createElectronUpdateManager/);
   assert.match(
     mainSource,
-    /createUpdateDialogController\([\s\S]*?updateManager\?\.isInstallationReady\(\)[\s\S]*?requestQuit\(\{ installUpdate: true \}\)/,
+    /createUpdateDialogController\([\s\S]*?updateManager\?\.isInstallationReady\(\)[\s\S]*?requestQuit\(\{ installUpdate: true, warningParent: parent \}\)/,
   );
   assert.match(mainSource, /updateManager\.onStateChanged\(\(state\) =>/);
   assert.match(mainSource, /Initialization failed without affecting application startup/);
@@ -276,7 +276,7 @@ test('duplicate update restarts and before-quit cannot create a second shutdown 
   assert.match(mainSource, /electronApp\.on\('before-quit',[\s\S]*?if \(allowQuit\)[\s\S]*?return/);
   assert.match(requestQuitSource, /allowQuit = true;[\s\S]*?installDownloadedUpdate\(\)/);
   assert.match(updateDialogControllerSource, /promptedVersions\.has\(version\)/);
-  assert.match(updateDialogControllerSource, /requestInstall\?\.\(\)/);
+  assert.match(updateDialogControllerSource, /requestInstall\?\.\(updateWindow\)/);
 });
 
 test('failed server cleanup blocks update installation and allows a later quit', async () => {
@@ -369,7 +369,7 @@ test('unrelated processes are never killed; only verified SnapOverLAN servers re
   assert.match(desktopServerManagerSource, /if \(!exited && serverProcess\?\.exitCode === null\)/);
   assert.match(serverSource, /const isLoopbackRequest[\s\S]*?remoteAddress/);
   assert.match(systemRouteSource, /crypto\.timingSafeEqual/);
-  assert.match(systemRouteSource, /onShutdown\('localhost-control'\)/);
+  assert.match(systemRouteSource, /onShutdown\('localhost-control', \{ onlyIfIdle:/);
   assert.doesNotMatch(desktopServerManagerSource, /Leaving the externally managed SnapOverLAN server running/);
 });
 

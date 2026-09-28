@@ -24,12 +24,13 @@ const createServerClient = ({ port, requestTimeoutMs = 1500 }) => {
     req.setTimeout(requestTimeoutMs, () => req.destroy(new Error(`Timed out requesting ${url}`)));
   });
 
-  const postServerShutdown = (token, decision) => new Promise((resolve, reject) => {
+  const postServerShutdown = (token, options) => new Promise((resolve, reject) => {
     const req = http.request(shutdownUrl, {
       method: 'POST',
       headers: { 'x-snapoverlan-shutdown-token': token, 'Content-Type': 'application/json' },
     }, (res) => {
       res.resume();
+      if (res.statusCode === 409) { resolve(false); return; }
       if (res.statusCode !== 202) {
         reject(new Error(`Shutdown request failed (${res.statusCode})`));
         return;
@@ -38,7 +39,7 @@ const createServerClient = ({ port, requestTimeoutMs = 1500 }) => {
     });
     req.on('error', reject);
     req.setTimeout(requestTimeoutMs, () => req.destroy(new Error('Timed out requesting server shutdown')));
-    req.end(decision ? JSON.stringify(decision) : undefined);
+    req.end(options ? JSON.stringify(options) : undefined);
   });
 
   const watchServerShutdown = (token, observer) => new Promise((resolve, reject) => {

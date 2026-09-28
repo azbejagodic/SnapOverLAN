@@ -6,6 +6,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../pwa/app.js', import.meta.url), 'utf8');
 const markup = await readFile(new URL('../pwa/index.html', import.meta.url), 'utf8');
 const styles = await readFile(new URL('../pwa/styles.css', import.meta.url), 'utf8');
+const manifest = JSON.parse(await readFile(new URL('../pwa/manifest.json', import.meta.url), 'utf8'));
 const extensionStyles = await readFile(new URL('../extension/styles.css', import.meta.url), 'utf8');
 const electronStyles = await readFile(new URL('../app/renderer/styles.css', import.meta.url), 'utf8');
 const interLicense = await readFile(new URL('../assets/fonts/Inter-OFL.txt', import.meta.url), 'utf8');
@@ -14,6 +15,20 @@ const fontAssets = await Promise.all([
   readFile(new URL('../extension/fonts/inter-latin-variable.woff2', import.meta.url)),
   readFile(new URL('../pwa/fonts/inter-latin-variable.woff2', import.meta.url)),
 ]);
+
+test('PWA manifest and browser theme match the existing page background', () => {
+  const background = styles.match(/--bg:\s*(#[\da-f]+)\s*;/i)?.[1];
+  const theme = markup.match(/<meta name="theme-color" content="([^"]+)"/)?.[1];
+  assert.equal(background, '#343940');
+  assert.equal(manifest.background_color, background);
+  assert.equal(manifest.theme_color, background);
+  assert.equal(theme, manifest.theme_color);
+});
+
+test('PWA viewport allows pinch zoom while preserving mobile sizing and safe areas', () => {
+  const viewport = markup.match(/<meta name="viewport" content="([^"]+)"/)?.[1];
+  assert.equal(viewport, 'width=device-width, initial-scale=1, viewport-fit=cover');
+});
 
 class FakeElement {
   constructor() {

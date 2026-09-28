@@ -1,10 +1,7 @@
 import { Router } from 'express';
 import { createBatchesRouter } from './batches.js';
 import { createSystemRouter } from './system.js';
-import {
-  createUploadCompletedEvent,
-  createUploadsRouter,
-} from './uploads.js';
+import { createUploadsRouter } from './uploads.js';
 
 const createApiRouter = (options = {}) => {
   const router = Router();
@@ -14,4 +11,4 @@ const createApiRouter = (options = {}) => {
   return router;
 };
 
-export { createApiRouter, createUploadCompletedEvent };
+export { createApiRouter };

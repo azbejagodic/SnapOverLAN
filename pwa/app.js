@@ -24,7 +24,6 @@ const selectedCount = document.getElementById('selectedCount');
 
 // File inputs expose a transient, read-only FileList, so this array is the tray's source of truth.
 let selectedFiles = [];
-let hasEverSelectedFiles = false;
 let isUploading = false;
 
 function clearPressedInputButtons() {
@@ -271,11 +270,6 @@ function appendFiles(fileList) {
 
   const availableSlots = MAX_FILES - selectedFiles.length;
   const acceptedFiles = supportedFiles.slice(0, availableSlots);
-  if (acceptedFiles.length === 0) {
-    return;
-  }
-
-  hasEverSelectedFiles = true;
   selectedFiles.push(...acceptedFiles);
 
   if (supportedFiles.length < files.length) {
@@ -411,7 +405,7 @@ uploadBtn.addEventListener('click', async () => {
 
 updateSelectedCount();
 renderSelectedTray();
-if (!hasEverSelectedFiles && selectedFiles.length === 0) {
+if (selectedFiles.length === 0) {
   setStatus('No photos selected yet.');
 }
 

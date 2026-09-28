@@ -442,7 +442,7 @@ test('manual server controls are removed and retry is error-only', () => {
   assert.match(rendererMarkup, /id="retryServerBtn"[^>]*hidden/);
   assert.match(rendererSource, /retryServerBtn\.hidden = desktopServerState !== 'error'/);
   assert.match(rendererSource, /window\.snapOverLAN\.retryServer\(\)/);
-  assert.match(rendererSource, /server\?\.state === 'error'[\s\S]*?server\.error/);
+  assert.match(rendererSource, /if \(server\?\.state === 'error'\) \{\s*renderStatus\(\{ state: 'offline' \}\)/);
   assert.match(mainSource, /const handleServerControl = async[\s\S]*?return getServerStatePayload\(\)/);
 });
 

@@ -153,7 +153,7 @@ const createDesktopShell = ({
     mainWindow.on('closed', () => { mainWindow = null; });
     mainWindow.webContents.on('did-finish-load', onStateReady);
     await mainWindow.loadFile(rendererPath, {
-      query: { launcher: 'electron', server: getServerLaunchMode() },
+      query: { server: getServerLaunchMode() },
     });
   };
 

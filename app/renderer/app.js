@@ -406,12 +406,12 @@ retryServerBtn?.addEventListener('click', async () => {
     const server = await serverRetryOperation;
     setDesktopServerState(server?.state);
     if (server?.state === 'error') {
-      renderStatus({ state: 'offline', message: server.error });
+      renderStatus({ state: 'offline' });
     }
   } catch (error) {
     const server = await window.snapOverLAN.getServerState().catch(() => ({ state: 'error' }));
     setDesktopServerState(server?.state || 'error');
-    renderStatus({ state: 'offline', message: server?.error || error.message });
+    renderStatus({ state: 'offline' });
   } finally {
     serverRetryOperation = null;
     renderDesktopControls();
@@ -459,7 +459,7 @@ window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
   else if (server?.state === 'error' || server?.state === 'offline') {
     lastServerStatusData = null;
     renderPhoneSetup(null);
-    renderStatus({ state: 'offline', message: server.error });
+    renderStatus({ state: 'offline' });
   }
   else if (server?.state === 'online') renderStatus({ state: 'online' });
 });

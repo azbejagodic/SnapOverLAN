@@ -58,7 +58,6 @@ const batchesRouteSource = await readFile(
   path.join(projectRoot, 'app', 'server', 'routes', 'batches.js'),
   'utf8',
 );
-const archiveSource = await readFile(path.join(projectRoot, 'app', 'server', 'archive.js'), 'utf8');
 const preloadSource = await readFile(path.join(projectRoot, 'app', 'preload.cjs'), 'utf8');
 const rendererMarkup = await readFile(path.join(projectRoot, 'app', 'renderer', 'index.html'), 'utf8');
 const rendererStyles = await readFile(path.join(projectRoot, 'app', 'renderer', 'styles.css'), 'utf8');
@@ -579,7 +578,7 @@ test('recent batches are the primary workspace with selection, download, and del
   assert.match(rendererBatchHistorySource, /deleteButton\.textContent = 'Delete'/);
   assert.match(rendererBatchHistorySource, /window\.snapOverLAN\.downloadBatch\(currentBatch\.id\)/);
   assert.match(rendererBatchHistorySource, /downloadButton\?\.addEventListener\('click', downloadCurrentBatch\)/);
-  assert.doesNotMatch(rendererBatchHistorySource, /latest\/download|createObjectURL|\.zip/);
+  assert.doesNotMatch(rendererBatchHistorySource, /createObjectURL|\.zip/);
   assert.match(rendererStyles, /\.batches-header[\s\S]*?justify-content:\s*space-between/);
   assert.match(rendererStyles, /\.batch-toolbar-actions[\s\S]*?margin-left:\s*auto/);
 });
@@ -603,14 +602,6 @@ test('Electron downloads batch files directly to the standard Downloads director
   assert.match(desktopBatchDownloadSource, /writeFile[\s\S]*?flag:\s*'wx'/);
   assert.match(desktopBatchDownloadSource, /`\$\{stem\} \(\$\{suffix\}\)\$\{extension\}`/);
   assert.match(batchesRouteSource, /router\.get\('\/batches\/:id\/files\/:name'/);
-});
-
-test('server ZIP archive API remains available outside the Electron download flow', () => {
-  assert.match(batchesRouteSource, /router\.get\('\/latest\/download'/);
-  assert.match(batchesRouteSource, /createZipBuffer\(files\)/);
-  assert.match(batchesRouteSource, /'Content-Type', 'application\/zip'/);
-  assert.match(archiveSource, /const createZipBuffer = async/);
-  assert.match(archiveSource, /batch\.zip|formatBatchZipName/);
 });
 
 test('desktop content header omits duplicate SnapOverLAN branding', () => {

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { createZipBuffer, formatBatchZipName } from '../archive.js';
 import { sendStoredFile } from './stored-file-response.js';
 import {
   clearAllBatches,
@@ -22,23 +21,6 @@ const createBatchesRouter = () => {
   const router = Router();
   router.get('/latest', async (_req, res, next) => {
     try { res.json({ files: await listLatestFiles() }); } catch (err) { next(err); }
-  });
-  router.get('/latest/download', async (_req, res, next) => {
-    try {
-      const files = await listLatestFiles();
-      if (files.length === 0) {
-        res.status(404).json({ error: 'No pictures available.' });
-        return;
-      }
-      const currentBatch = (await listBatches()).find((batch) => batch.current);
-      const zipBuffer = await createZipBuffer(files);
-      const zipName = formatBatchZipName(currentBatch?.createdAt);
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
-      res.setHeader('Content-Length', String(zipBuffer.length));
-      res.send(zipBuffer);
-    } catch (err) { next(err); }
   });
   router.get('/batches', async (_req, res) => {
     try { res.json({ batches: await listBatches() }); } catch (err) { sendStorageError(res, err); }

@@ -135,7 +135,6 @@ test('LAN clients receive 404 for batch, file, settings, diagnostics, and contro
 
   const blockedRequests = [
     request('/api/latest', { lan: true }),
-    request('/api/latest/download', { lan: true }),
     request('/api/batches', { lan: true }),
     request(`/api/batches/${encodeURIComponent(batchId)}`, { lan: true }),
     request(`/api/batches/${encodeURIComponent(batchId)}/files/${encodeURIComponent(filename)}`, { lan: true }),

@@ -258,7 +258,6 @@ LAN-accessible surface:
 Important localhost-only routes:
 
 - `GET /api/latest` and `GET /files/:name` — current batch metadata and files
-- `GET /api/latest/download` — download the current batch as a ZIP archive
 - `/api/batches` and `/api/batches/:id` — list, inspect, select, and delete batches; individual batch files are available through `/api/batches/:id/files/:name`
 - `GET`/`PUT /api/storage-settings` — optional time-based retention
 - `GET /api/upload-status`, `/api/phone-url`, and `/api/server-status` — local state and diagnostics

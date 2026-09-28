@@ -1,5 +1,6 @@
 const API_BASE_URL = 'http://localhost:8787';
 const REFRESH_INTERVAL_MS = 2000;
+const MAX_COPY_PIXELS = 40_000_000;
 
 const autoCopyToggleBtn = document.getElementById('autoCopyToggleBtn');
 const refreshBtn = document.getElementById('refreshBtn');
@@ -143,32 +144,38 @@ async function convertImageBlobToPng(blob) {
   }
 
   try {
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      throw new Error('2D canvas context unavailable.');
+    if (bitmap.width * bitmap.height > MAX_COPY_PIXELS) {
+      throw new Error('Image is too large to copy. Use Open or Download instead.');
     }
 
-    ctx.drawImage(bitmap, 0, 0);
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
 
-    const pngBlob = await new Promise((resolve, reject) => {
-      canvas.toBlob((result) => {
-        if (result) {
-          resolve(result);
-          return;
-        }
-        reject(new Error('Canvas PNG conversion returned null blob.'));
-      }, 'image/png');
-    });
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('2D canvas context unavailable.');
+      }
 
-    console.log('[popup] convert end', { outputType: pngBlob.type, outputSize: pngBlob.size });
-    return pngBlob;
-  } catch (error) {
-    console.error('[popup] PNG conversion failed', error);
-    throw new Error('Copy blocked. Use Open then Ctrl+C.');
+      ctx.drawImage(bitmap, 0, 0);
+
+      const pngBlob = await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) {
+            resolve(result);
+            return;
+          }
+          reject(new Error('Canvas PNG conversion returned null blob.'));
+        }, 'image/png');
+      });
+
+      console.log('[popup] convert end', { outputType: pngBlob.type, outputSize: pngBlob.size });
+      return pngBlob;
+    } catch (error) {
+      console.error('[popup] PNG conversion failed', error);
+      throw new Error('Copy blocked. Use Open then Ctrl+C.');
+    }
   } finally {
     bitmap.close();
   }

@@ -27,7 +27,7 @@ test('PWA manifest and browser theme match the existing page background', () => 
 
 test('PWA viewport allows pinch zoom while preserving mobile sizing and safe areas', () => {
   const viewport = markup.match(/<meta name="viewport" content="([^"]+)"/)?.[1];
-  assert.equal(viewport, 'width=device-width, initial-scale=1, viewport-fit=cover');
+  assert.equal(viewport, 'width=device-width, initial-scale=1, minimum-scale=1, viewport-fit=cover');
 });
 
 class FakeElement {

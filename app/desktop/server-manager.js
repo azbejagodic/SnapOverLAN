@@ -194,16 +194,11 @@ const createServerManager = ({
       SNAPOVERLAN_LOG_FILE: logPath,
       SNAPOVERLAN_RUN_SERVER: '1',
       SNAPOVERLAN_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
-      PHOTO_GPT_PARENT_PID: String(process.pid),
-      PHOTO_GPT_LOG_FILE: logPath,
-      PHOTO_GPT_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
     };
     if (isPackaged) {
       childEnv.ELECTRON_RUN_AS_NODE = '1';
       childEnv.SNAPOVERLAN_DATA_DIR = runtimeDataRoot;
       childEnv.SNAPOVERLAN_PACKAGED = '1';
-      childEnv.PHOTO_GPT_DATA_DIR = runtimeDataRoot;
-      childEnv.PHOTO_GPT_PACKAGED = '1';
     }
 
     await writeStartupLog('server-starting', {

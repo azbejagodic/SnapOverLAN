@@ -1,17 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const MAX_IMAGE_COPY_BYTES = 32 * 1024 * 1024;
 const BATCH_ID_PATTERN = /^batch_[a-zA-Z0-9_-]+$/;
-const copyImageBytes = (imageBytes) => {
-  if (
-    Object.prototype.toString.call(imageBytes) !== '[object ArrayBuffer]'
-    || imageBytes.byteLength <= 0
-    || imageBytes.byteLength > MAX_IMAGE_COPY_BYTES
-  ) {
-    return Promise.reject(new TypeError('Expected non-empty image bytes.'));
-  }
-  return ipcRenderer.invoke('image:copy', imageBytes);
-};
 
 contextBridge.exposeInMainWorld('snapOverLAN', Object.freeze({
   serverRequest: (resourcePath, method = 'GET') => ipcRenderer.invoke('server:request', resourcePath, method),
@@ -25,7 +14,6 @@ contextBridge.exposeInMainWorld('snapOverLAN', Object.freeze({
     }
     return ipcRenderer.invoke('batch:download', batchId);
   },
-  copyImageBytes,
   onDesktopStateChanged: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on('desktop:state-changed', listener);

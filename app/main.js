@@ -16,7 +16,6 @@ import {
   normalizeDesktopSettings,
   updateDesktopSetting,
 } from './desktop-settings.js';
-import { copyImageBytesToClipboard } from './manual-copy.js';
 import { createServerManager } from './desktop/server-manager.js';
 import { createSettingsStore } from './desktop/settings-store.js';
 import { createAutoCopyController } from './desktop/auto-copy-controller.js';
@@ -396,17 +395,6 @@ ipcMain.handle('batch:download', async (event, batchId) => {
   const openError = await shell.openPath(destinationDir);
   if (openError) console.warn('Could not open the Downloads folder:', openError);
   return result;
-});
-ipcMain.handle('image:copy', (event, imageBytes) => {
-  if (!desktopShell.isMainWindowSender(event.sender)) {
-    throw new Error('Image copy request was rejected.');
-  }
-
-  return copyImageBytesToClipboard({
-    imageBytes,
-    createImageFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
-    writeImage: (image) => clipboard.writeImage(image),
-  });
 });
 
 const gotLock = electronApp.requestSingleInstanceLock();

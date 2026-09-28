@@ -158,8 +158,8 @@ test('preload exposes only narrow non-updater desktop methods', () => {
   assert.match(preloadSource, /setBackgroundMode/);
   assert.match(preloadSource, /downloadBatch[\s\S]*?ipcRenderer\.invoke\('batch:download', batchId\)/);
   assert.match(preloadSource, /BATCH_ID_PATTERN\.test\(batchId\)/);
-  assert.match(preloadSource, /copyImageBytes[\s\S]*?ipcRenderer\.invoke\('image:copy', imageBytes\)/);
-  assert.match(preloadSource, /imageBytes\.byteLength > MAX_IMAGE_COPY_BYTES/);
+  assert.doesNotMatch(preloadSource, /copyImageBytes|image:copy|MAX_IMAGE_COPY_BYTES/);
+  assert.doesNotMatch(mainSource, /manual-copy|copyImageBytesToClipboard|image:copy/);
   assert.match(preloadSource, /onAutoCopyResult/);
   assert.match(preloadSource, /onDesktopStateChanged/);
   assert.doesNotMatch(

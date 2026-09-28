@@ -305,7 +305,7 @@ The standalone server recognizes these developer-facing variables:
 - `SNAPOVERLAN_LOG_FILE` — optional startup log path
 - `SNAPOVERLAN_DEBUG_MDNS=1` — verbose mDNS diagnostics
 
-`SNAPOVERLAN_PARENT_PID`, `SNAPOVERLAN_PACKAGED`, and `SNAPOVERLAN_SERVER_SOURCE` are used internally to coordinate the Electron app and child server. Legacy `PHOTO_GPT_*` names remain accepted as fallbacks for the port, data/log paths, and internal coordination variables; mDNS debug logging recognizes only `SNAPOVERLAN_DEBUG_MDNS`.
+`SNAPOVERLAN_PARENT_PID`, `SNAPOVERLAN_PACKAGED`, and `SNAPOVERLAN_SERVER_SOURCE` are used internally to coordinate the Electron app and child server. SnapOverLAN configuration uses only the `SNAPOVERLAN_*` names.
 
 ## Technology
 

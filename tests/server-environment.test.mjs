@@ -63,41 +63,51 @@ for (const isPackaged of [false, true]) {
 const readConfig = (env) => runInNewContext(`${configSource}\n({ PORT, DATA_ROOT, STARTUP_LOG_PATH, LAUNCH_SOURCE, IS_PACKAGED_RUNTIME })`, {
   path, fileURLToPath, process: { env },
 });
-const legacyEnv = {
+// Negative regression inputs: these retired names must not configure the server.
+const retiredEnv = {
   PHOTO_GPT_PORT: '9876', PHOTO_GPT_DATA_DIR: 'legacy-data', PHOTO_GPT_LOG_FILE: 'legacy.log',
   PHOTO_GPT_SERVER_SOURCE: 'legacy-launch', PHOTO_GPT_PACKAGED: '1', PHOTO_GPT_PARENT_PID: '123',
 };
 
-test('server config still accepts legacy external launch inputs', () => {
-  const config = readConfig(legacyEnv);
-  assert.equal(config.PORT, 9876);
-  assert.equal(config.DATA_ROOT, 'legacy-data');
-  assert.equal(config.STARTUP_LOG_PATH, 'legacy.log');
-  assert.equal(config.LAUNCH_SOURCE, 'legacy-launch');
-  assert.equal(config.IS_PACKAGED_RUNTIME, true);
-  assert.equal(readConfig({ PHOTO_GPT_PARENT_PID: '123' }).LAUNCH_SOURCE, 'electron');
+test('retired environment names are ignored and server defaults remain intact', () => {
+  for (const env of [retiredEnv, {
+    ...retiredEnv,
+    SNAPOVERLAN_PORT: '', SNAPOVERLAN_DATA_DIR: '', SNAPOVERLAN_LOG_FILE: '',
+    SNAPOVERLAN_SERVER_SOURCE: '', SNAPOVERLAN_PACKAGED: '', SNAPOVERLAN_PARENT_PID: '',
+  }]) {
+    const config = readConfig(env);
+    assert.equal(config.PORT, 8787);
+    assert.equal(config.DATA_ROOT, fileURLToPath(new URL('../data', import.meta.url)));
+    assert.equal(config.STARTUP_LOG_PATH, '');
+    assert.equal(config.LAUNCH_SOURCE, 'standalone');
+    assert.equal(config.IS_PACKAGED_RUNTIME, false);
+  }
 });
 
-test('modern config inputs take precedence over conflicting legacy inputs', () => {
-  const config = readConfig({
-    ...legacyEnv, SNAPOVERLAN_PORT: '9877', SNAPOVERLAN_DATA_DIR: 'modern-data',
-    SNAPOVERLAN_LOG_FILE: 'modern.log', SNAPOVERLAN_SERVER_SOURCE: 'modern-launch', SNAPOVERLAN_PACKAGED: '0',
-  });
-  assert.equal(config.PORT, 9877);
-  assert.equal(config.DATA_ROOT, 'modern-data');
-  assert.equal(config.STARTUP_LOG_PATH, 'modern.log');
-  assert.equal(config.LAUNCH_SOURCE, 'modern-launch');
-  assert.equal(config.IS_PACKAGED_RUNTIME, false);
+test('modern variables configure the server independently of retired inputs', () => {
+  for (const extraEnv of [{}, retiredEnv]) {
+    const config = readConfig({
+      ...extraEnv, SNAPOVERLAN_PORT: '9877', SNAPOVERLAN_DATA_DIR: 'modern-data',
+      SNAPOVERLAN_LOG_FILE: 'modern.log', SNAPOVERLAN_SERVER_SOURCE: 'modern-launch', SNAPOVERLAN_PACKAGED: '1',
+    });
+    assert.equal(config.PORT, 9877);
+    assert.equal(config.DATA_ROOT, 'modern-data');
+    assert.equal(config.STARTUP_LOG_PATH, 'modern.log');
+    assert.equal(config.LAUNCH_SOURCE, 'modern-launch');
+    assert.equal(config.IS_PACKAGED_RUNTIME, true);
+  }
+  assert.equal(readConfig({ SNAPOVERLAN_PARENT_PID: '456' }).LAUNCH_SOURCE, 'electron');
+  assert.equal(readConfig({ ...retiredEnv, SNAPOVERLAN_PACKAGED: '0' }).IS_PACKAGED_RUNTIME, false);
 });
 
-for (const modernPid of [undefined, '456']) {
-  test(`parent monitoring preserves ${modernPid ? 'modern precedence' : 'legacy PID fallback'}`, () => {
+for (const modernPid of [undefined, '', '456']) {
+  test(`parent monitoring ${modernPid ? 'uses the modern PID' : `ignores retired PID when modern PID is ${modernPid === '' ? 'empty' : 'absent'}`}`, () => {
     let tick;
     let observedPid;
     let shutdownReason;
     const watch = runInNewContext(`let parentWatchTimer;\n${watchSource}\nwatchParentProcess`, {
       process: {
-        env: { PHOTO_GPT_PARENT_PID: '123', ...(modernPid ? { SNAPOVERLAN_PARENT_PID: modernPid } : {}) },
+        env: { PHOTO_GPT_PARENT_PID: '123', ...(modernPid !== undefined ? { SNAPOVERLAN_PARENT_PID: modernPid } : {}) },
         kill: (pid, signal) => {
           observedPid = pid;
           assert.equal(signal, 0);
@@ -108,8 +118,14 @@ for (const modernPid of [undefined, '456']) {
       shutdownServer: (reason) => { shutdownReason = reason; },
     });
     watch();
+    if (!modernPid) {
+      assert.equal(tick, undefined);
+      assert.equal(observedPid, undefined);
+      assert.equal(shutdownReason, undefined);
+      return;
+    }
     tick();
-    assert.equal(observedPid, Number(modernPid || '123'));
+    assert.equal(observedPid, Number(modernPid));
     assert.equal(shutdownReason, 'parent-exited');
   });
 }

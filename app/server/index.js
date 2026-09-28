@@ -195,8 +195,7 @@ const stopServer = async () => {
 };
 
 const watchParentProcess = () => {
-  // PHOTO_GPT_PARENT_PID is a legacy fallback for pre-rename Electron launches.
-  const parentPid = Number(process.env.SNAPOVERLAN_PARENT_PID || process.env.PHOTO_GPT_PARENT_PID);
+  const parentPid = Number(process.env.SNAPOVERLAN_PARENT_PID);
   if (!Number.isInteger(parentPid) || parentPid <= 0) {
     return;
   }

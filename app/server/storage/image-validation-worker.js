@@ -30,7 +30,7 @@ const identify = (bytes) => {
 
 try {
   const size = (await fs.stat(filePath)).size;
-  if (size <= 0 || size > MAX_FILE_SIZE) throw new Error('Image is empty or exceeds the 12MB file limit.');
+  if (size <= 0 || size > MAX_FILE_SIZE) throw new Error('Image is empty or exceeds the 20MB file limit.');
   const bytes = await fs.readFile(filePath);
   const verified = identify(bytes);
   if (verified.format === 'heif') {

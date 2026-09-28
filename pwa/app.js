@@ -308,6 +308,56 @@ fastUploadToggle.addEventListener('change', () => {
   writeFastUploadPreference(fastUploadEnabled);
 });
 
+async function getUploadErrorMessage(response) {
+  let error;
+  try {
+    const body = await response.json();
+    if (typeof body?.error === 'string') error = body.error;
+  } catch {
+    // An empty or non-JSON response still gets a safe status-based message.
+  }
+
+  if (response.status === 503) return 'SnapOverLAN is shutting down. Try again after reopening it.';
+  if (response.status >= 500 && response.status < 600) return 'SnapOverLAN could not complete the upload. Try again.';
+  if (response.status >= 400 && response.status < 500) {
+    switch (error) {
+      case 'Each image must be <= 20MB.':
+      case 'Invalid image: Image is empty or exceeds the 20MB file limit.':
+        return 'Each photo must be 20 MB or smaller.';
+      case 'Maximum 10 files are allowed.':
+        return 'You can upload up to 10 photos at a time.';
+      case 'Only JPEG, PNG, WebP, HEIC, and HEIF images are allowed.':
+        return 'Only JPEG, PNG, WebP, HEIC, and HEIF photos are supported.';
+      case 'Invalid image: Image exceeds the 60 megapixel upload limit or has invalid dimensions.':
+      case 'Invalid image: HEIF images exceed the 60 megapixel upload limit.':
+      case 'Invalid image: Input image exceeds pixel limit':
+        return 'One or more photos exceed the 60 MP upload limit.';
+      case 'Invalid image: AVIF uploads are not supported.':
+        return 'AVIF photos are not supported. Use JPEG, PNG, WebP, HEIC, or HEIF.';
+      case 'Invalid image: Unsupported HEIF image compression.':
+      case 'Invalid image: Invalid HEIF image count.':
+      case 'Invalid image: Malformed HEIF image data.':
+        return 'One or more HEIC/HEIF photos could not be read.';
+      case 'Invalid image: Only valid JPEG, PNG, WebP, HEIC, and HEIF images are allowed.':
+      case 'Invalid image: Invalid HEIF file type box.':
+      case 'Invalid image: Image format does not match its content.':
+      case 'Invalid image: Input buffer contains unsupported image format':
+        return 'One or more selected files are not valid supported photos.';
+    }
+    // Recognize decoder diagnostics, but never show their variable details.
+    if (typeof error === 'string') {
+      if (/^Invalid image: (?:Input buffer has corrupt header: )?heif:/.test(error)) {
+        return 'One or more HEIC/HEIF photos could not be read.';
+      }
+      if (/^Invalid image: (?:Input buffer has corrupt header: |VipsJpeg: |pngload(?:_buffer)?: |webpload(?:_buffer)?: )/.test(error)) {
+        return 'One or more selected files are not valid supported photos.';
+      }
+    }
+    return 'Upload rejected. Check the selected photos and try again.';
+  }
+  return 'Upload failed. Your selected files are still available.';
+}
+
 uploadBtn.addEventListener('click', async () => {
   if (selectedFiles.length === 0) {
     setStatus('Add at least one photo before upload.', 'error');
@@ -341,10 +391,10 @@ uploadBtn.addEventListener('click', async () => {
       throw error;
     }
 
-    if (response.status === 503) {
-      failureMessage = 'SnapOverLAN is shutting down. Try again after reopening it.';
+    if (!response.ok) {
+      failureMessage = await getUploadErrorMessage(response);
+      throw new Error(`Upload failed (${response.status})`);
     }
-    if (!response.ok) throw new Error(`Upload failed (${response.status})`);
 
     const uploadedCount = uploadFiles.length;
     selectedFiles = [];

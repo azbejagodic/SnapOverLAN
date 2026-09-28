@@ -8,7 +8,7 @@ SnapOverLAN is a Windows phone-to-PC photo transfer bridge for a trusted local n
 
 - Phone camera and gallery upload over the local network
 - JPEG, PNG, WebP, HEIC, and HEIF support
-- Up to 10 photos per batch, with a 12 MB limit per photo
+- Up to 10 photos per batch, with a 20 MB limit per photo
 - Fast Upload optimization for large photos
 - Stable `.local` phone address with direct-IP fallback
 - Recent batch history, selection, download, and deletion in the desktop app
@@ -109,7 +109,7 @@ Open the QR-code address in the phone's browser. The interface provides:
 - the Fast Upload toggle; and
 - one action to upload the selected batch.
 
-Supported formats are JPEG, PNG, WebP, HEIC, and HEIF. Each photo sent to the server must be no larger than 12 MB. If more than 10 supported photos are chosen, only the available tray slots are filled.
+Supported formats are JPEG, PNG, WebP, HEIC, and HEIF. Each photo sent to the server must be no larger than 20 MB. If more than 10 supported photos are chosen, only the available tray slots are filled.
 
 The included web app manifest supports adding SnapOverLAN to the phone's home screen where the browser offers that option. It is served from the PC over the local network and is not an offline app.
 

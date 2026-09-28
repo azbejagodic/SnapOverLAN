@@ -406,22 +406,84 @@ test('an upload network failure is caught and keeps the selected file available'
   assert.equal(elements.uploadBtn.disabled, false);
 });
 
-for (const status of [400, 500, 503]) {
-  test(`HTTP ${status} preserves selected photos and uses the appropriate server error message`, async () => {
+const rejectedMessage = 'Upload rejected. Check the selected photos and try again.';
+const serverFailureMessage = 'SnapOverLAN could not complete the upload. Try again.';
+const invalidPhotoMessage = 'One or more selected files are not valid supported photos.';
+const heifFailureMessage = 'One or more HEIC/HEIF photos could not be read.';
+const pixelLimitMessage = 'One or more photos exceed the 60 MP upload limit.';
+const uploadErrorCases = [
+  ['20MB size', 400, { error: 'Each image must be <= 20MB.' }, 'Each photo must be 20 MB or smaller.'],
+  ['worker size', 400, { error: 'Invalid image: Image is empty or exceeds the 20MB file limit.' }, 'Each photo must be 20 MB or smaller.'],
+  ['10 files', 400, { error: 'Maximum 10 files are allowed.' }, 'You can upload up to 10 photos at a time.'],
+  ['unsupported MIME', 400, { error: 'Only JPEG, PNG, WebP, HEIC, and HEIF images are allowed.' }, 'Only JPEG, PNG, WebP, HEIC, and HEIF photos are supported.'],
+  ['60MP dimensions', 400, { error: 'Invalid image: Image exceeds the 60 megapixel upload limit or has invalid dimensions.' }, pixelLimitMessage],
+  ['60MP HEIF frames', 400, { error: 'Invalid image: HEIF images exceed the 60 megapixel upload limit.' }, pixelLimitMessage],
+  ['decoder pixel limit', 400, { error: 'Invalid image: Input image exceeds pixel limit' }, pixelLimitMessage],
+  ['AVIF', 400, { error: 'Invalid image: AVIF uploads are not supported.' }, 'AVIF photos are not supported. Use JPEG, PNG, WebP, HEIC, or HEIF.'],
+  ['invalid content', 400, { error: 'Invalid image: Only valid JPEG, PNG, WebP, HEIC, and HEIF images are allowed.' }, invalidPhotoMessage],
+  ['malformed HEIF container', 400, { error: 'Invalid image: Invalid HEIF file type box.' }, invalidPhotoMessage],
+  ['format mismatch', 400, { error: 'Invalid image: Image format does not match its content.' }, invalidPhotoMessage],
+  ['unsupported buffer', 400, { error: 'Invalid image: Input buffer contains unsupported image format' }, invalidPhotoMessage],
+  ['corrupt header', 400, { error: 'Invalid image: Input buffer has corrupt header: internal decoder details' }, invalidPhotoMessage],
+  ['corrupt JPEG', 400, { error: 'Invalid image: VipsJpeg: premature end of JPEG image' }, invalidPhotoMessage],
+  ['corrupt PNG', 400, { error: 'Invalid image: pngload_buffer: libspng read error' }, invalidPhotoMessage],
+  ['corrupt WebP', 400, { error: 'Invalid image: webpload: unable to read pixels' }, invalidPhotoMessage],
+  ['HEIF compression', 400, { error: 'Invalid image: Unsupported HEIF image compression.' }, heifFailureMessage],
+  ['HEIF decode count', 400, { error: 'Invalid image: Invalid HEIF image count.' }, heifFailureMessage],
+  ['HEIF decode data', 400, { error: 'Invalid image: Malformed HEIF image data.' }, heifFailureMessage],
+  ['HEIF decoder', 400, { error: 'Invalid image: heif: Invalid input: Unexpected end of file' }, heifFailureMessage],
+  ['HEIF header decoder', 400, { error: 'Invalid image: Input buffer has corrupt header: heif: Invalid input' }, heifFailureMessage],
+  ['unknown 4xx', 422, { error: 'ENOENT: C:/private/photos/image.jpg\n at worker thread' }, rejectedMessage],
+  ['unknown validation exception', 400, { error: 'Invalid image: internal worker exception at C:/private/image.jpg' }, rejectedMessage],
+  ['message containing a known error', 400, { error: 'Internal exception: Each image must be <= 20MB.' }, rejectedMessage],
+  ['non-string error', 400, { error: { message: 'Each image must be <= 20MB.' } }, rejectedMessage],
+  ['null body', 400, null, rejectedMessage],
+  ['missing error', 400, {}, rejectedMessage],
+  ['string body', 400, 'Each image must be <= 20MB.', rejectedMessage],
+  ['malformed/non-JSON', 400, undefined, rejectedMessage],
+  ['server failure', 500, { error: 'Sharp/libheif internal exception at C:/private/image.jpg' }, serverFailureMessage],
+  ['5xx overrides known validation error', 502, { error: 'Each image must be <= 20MB.' }, serverFailureMessage],
+  ['non-JSON server failure', 500, undefined, serverFailureMessage],
+  ['shutdown', 503, { error: 'Each image must be <= 20MB.' }, 'SnapOverLAN is shutting down. Try again after reopening it.'],
+  ['non-JSON shutdown', 503, undefined, 'SnapOverLAN is shutting down. Try again after reopening it.'],
+  ['unexpected HTTP status', 302, { error: 'Each image must be <= 20MB.' }, 'Upload failed. Your selected files are still available.'],
+];
+
+for (const [label, status, body, message] of uploadErrorCases) {
+  test(`${label} uses safe upload text, retains photos, and permits immediate retry`, async () => {
     let fail = true;
-    const elements = createHarness(async () => fail ? { ok: false, status } : { ok: true, status: 200 });
-    elements.galleryInput.files = [{ name: 'photo.jpg', type: 'image/jpeg', size: 10 }];
+    let jsonReads = 0;
+    const elements = createHarness(async () => fail ? {
+      ok: false,
+      status,
+      json: async () => {
+        jsonReads += 1;
+        if (body === undefined) throw new SyntaxError('Unexpected token < in HTML error page');
+        return body;
+      },
+    } : { ok: true, status: 200 });
+    const photos = [
+      { name: 'photo.jpg', type: 'image/jpeg', size: 10 },
+      { name: 'photo.heif', type: 'image/heif', size: 10 },
+    ];
+    elements.galleryInput.files = photos;
     await elements.galleryInput.dispatch('change');
     await elements.uploadBtn.dispatch('click');
-    assert.equal(elements.status.textContent, status === 503
-      ? 'SnapOverLAN is shutting down. Try again after reopening it.'
-      : 'Upload failed. Your selected files are still available.');
-    assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+    assert.equal(jsonReads, 1);
+    assert.equal(elements.status.textContent, message);
+    assert.equal(elements.status.className, 'error');
+    assert.equal(elements.selectedCount.textContent, 'Selected: 2 / 10');
     assert.equal(elements.uploadBtn.disabled, false);
     fail = false;
     await elements.uploadBtn.dispatch('click');
-    assert.equal(elements.status.textContent, 'Uploaded 1 photo.');
+    assert.equal(elements.status.textContent, 'Uploaded 2 photos.');
     assert.equal(elements.selectedCount.textContent, 'Selected: 0 / 10');
+    assert.equal(elements.uploadBtn.disabled, true);
+    assert.equal(jsonReads, 1);
+    for (let index = 0; index < photos.length; index += 1) {
+      assert.strictEqual(elements.formDataEntries[index][1], photos[index]);
+      assert.strictEqual(elements.formDataEntries[index + photos.length][1], photos[index]);
+    }
   });
 }
 

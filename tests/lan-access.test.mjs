@@ -302,16 +302,16 @@ test('fake, empty, unsupported, and malformed images never leave a partial batch
   }
 });
 
-test('12MB size and 10-file limits remain enforced with clean failure', async () => {
+test('20MB size and 10-file limits remain enforced with clean failure', async () => {
   const jpeg = await imageFixture('image/jpeg');
-  const exactLimit = Buffer.alloc(12 * 1024 * 1024);
+  const exactLimit = Buffer.alloc(20 * 1024 * 1024);
   jpeg.copy(exactLimit);
   const accepted = await uploadFiles([{ name: 'limit.jpg', type: 'image/jpeg', contents: exactLimit }]);
   assert.equal(accepted.response.status, 200, JSON.stringify(accepted.body));
   const before = await request('/api/batches').then((r) => r.json());
   const rejected = await uploadFiles([{ name: 'oversize.jpg', type: 'image/jpeg', contents: Buffer.concat([exactLimit, Buffer.alloc(1)]) }]);
   assert.equal(rejected.response.status, 400);
-  assert.match(rejected.body.error, /12MB/);
+  assert.equal(rejected.body.error, 'Each image must be <= 20MB.');
   assert.deepEqual(await request('/api/batches').then((r) => r.json()), before);
   assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
   const ten = await uploadFiles(Array.from({ length: 10 }, () => ({ name: 'photo.jpg', type: 'image/jpeg' })));
@@ -319,11 +319,12 @@ test('12MB size and 10-file limits remain enforced with clean failure', async ()
   assert.equal(ten.body.files.length, 10);
   const eleven = await uploadFiles(Array.from({ length: 11 }, () => ({ name: 'photo.jpg', type: 'image/jpeg' })));
   assert.equal(eleven.response.status, 400);
+  assert.equal(eleven.body.error, 'Maximum 10 files are allowed.');
   assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
 });
 
-test('absurd dimensions are rejected before full pixel decoding', async () => {
-  const huge = await sharp({ create: { width: 8000, height: 8000, channels: 3, background: 'black' } }).png().toBuffer();
+test('dimensions above 60MP are rejected before full pixel decoding', async () => {
+  const huge = await sharp({ create: { width: 10000, height: 6001, channels: 3, background: 'black' } }).png().toBuffer();
   const result = await uploadFiles([{ name: 'huge.png', type: 'image/png', contents: huge }]);
   assert.equal(result.response.status, 400);
   assert.match(result.body.error, /pixel limit|megapixel/i);
@@ -333,6 +334,12 @@ test('absurd dimensions are rejected before full pixel decoding', async () => {
 test('a full-resolution 48MP phone image remains uploadable', async () => {
   const contents = await sharp({ create: { width: 8000, height: 6000, channels: 3, background: '#507080' } }).jpeg().toBuffer();
   const result = await uploadFiles([{ name: 'phone-48mp.jpg', type: 'image/jpeg', contents }]);
+  assert.equal(result.response.status, 200, JSON.stringify(result.body));
+});
+
+test('an image exactly at the 60MP upload limit is accepted', async () => {
+  const contents = await sharp({ create: { width: 10000, height: 6000, channels: 3, background: '#507080' } }).jpeg().toBuffer();
+  const result = await uploadFiles([{ name: 'limit-60mp.jpg', type: 'image/jpeg', contents }]);
   assert.equal(result.response.status, 200, JSON.stringify(result.body));
 });
 

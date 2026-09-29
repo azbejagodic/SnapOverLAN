@@ -21,6 +21,11 @@ class Element {
   hidden = true;
   disabled = false;
   className = '';
+  open = false;
+  children = [];
+  set innerHTML(value) { assert.equal(value, ''); this.children = []; }
+  append(...children) { this.children.push(...children); }
+  appendChild(child) { this.children.push(child); }
   listeners = new Map();
   addEventListener(name, listener) { this.listeners.set(name, listener); }
   setAttribute() {}
@@ -39,21 +44,24 @@ const createHarness = async (initialStatus = status()) => {
     'refreshBtn', 'qrBtn', 'connectionPill', 'backgroundToggleBtn', 'retryServerBtn',
     'phoneUrl', 'phoneQr', 'qrFallback', 'batchMessage', 'batchesList',
     'downloadCurrentBatchBtn', 'clearBatchesBtn', 'qrModal', 'closeQrBtn',
+    'diagnosticsSummary', 'diagnosticsList', 'diagnosticsWarning', 'diagnosticsUrls', 'diagnosticsPanel',
   ].map((id) => [id, new Element()]));
   const navigator = {};
   Object.defineProperty(navigator, 'onLine', {
     get() { assert.fail('internet/browser connectivity must not determine LAN availability'); },
   });
   const renderer = runInNewContext(`${source}\n({ getState: () => desktopServerState })`, {
-    URL, URLSearchParams, console, navigator, isPrivateLanUrl,
+    URL, console, navigator, isPrivateLanUrl,
     fetch: () => assert.fail('renderer must not probe external connectivity'),
     document: {
       hidden: false,
       getElementById: (id) => elements[id] || null,
+      createElement: () => new Element(),
       addEventListener() {},
     },
     window: {
-      location: { search: '' }, addEventListener() {},
+      get location() { assert.fail('diagnostics must not read renderer query parameters'); },
+      addEventListener() {},
       setInterval: (callback, ms) => { assert.equal(ms, 5000); interval = callback; return 1; },
       clearInterval() {},
       snapOverLAN: {
@@ -178,4 +186,48 @@ test('LAN availability requires no internet connectivity API or external request
   await h.refresh();
   assert.equal(h.elements.connectionPill.textContent, 'Server online');
   assert.deepEqual(h.requests, ['/api/server-status', '/api/server-status']);
+});
+
+test('diagnostics uses live server source and preserves the user expansion choice', async () => {
+  const h = await createHarness({ ...status(), launchSource: 'electron-dev-child' });
+  const rows = () => Object.fromEntries(h.elements.diagnosticsList.children
+    .reduce((pairs, element, index, children) => {
+      if (index % 2 === 0) pairs.push([element.textContent, children[index + 1].textContent]);
+      return pairs;
+    }, []));
+  assert.equal(h.elements.diagnosticsPanel.open, false);
+  assert.equal(rows()['Server source'], 'electron-dev-child');
+  assert.equal(rows()['Stable phone URL'], stableUrl);
+  assert.match(h.elements.diagnosticsWarning.textContent, /Phone checklist/);
+  h.elements.diagnosticsPanel.open = true;
+  h.setResponse({ ...status(), launchSource: 'standalone' });
+  await h.refresh();
+  assert.equal(rows()['Server source'], 'standalone');
+  assert.equal(h.elements.diagnosticsPanel.open, true);
+  h.elements.diagnosticsPanel.open = false;
+  h.setResponse(status([]));
+  await h.refresh();
+  assert.equal(h.elements.diagnosticsPanel.open, false);
+  assert.match(h.elements.diagnosticsWarning.textContent, /No private LAN IPv4/);
+});
+
+test('diagnostics clears stale links on failure and restores current links after recovery', async () => {
+  const h = await createHarness();
+  const links = () => h.elements.diagnosticsUrls.children[1]?.children.map((item) => item.children[0].href) || [];
+  assert.deepEqual(links(), [lanUrl]);
+  h.setResponse(new Error('ECONNREFUSED'));
+  await h.refresh();
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Server unavailable');
+  assert.equal(h.elements.diagnosticsWarning.textContent, 'ECONNREFUSED');
+  assert.equal(h.elements.diagnosticsWarning.hidden, false);
+  assert.equal(h.elements.diagnosticsList.children.length, 0);
+  assert.equal(h.elements.diagnosticsUrls.hidden, true);
+  assert.deepEqual(links(), []);
+  assert.equal(h.elements.diagnosticsPanel.open, false);
+  const newUrl = 'http://10.0.0.5:8787';
+  h.setResponse(status([newUrl]));
+  await h.refresh();
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Server online');
+  assert.equal(h.elements.diagnosticsUrls.hidden, false);
+  assert.deepEqual(links(), [newUrl]);
 });

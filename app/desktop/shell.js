@@ -9,7 +9,6 @@ const createDesktopShell = ({
   Tray,
   appIconPath,
   getBackgroundMode,
-  getServerLaunchMode,
   getServerOnline,
   isQuitAllowed,
   onBackgroundToggle,
@@ -152,9 +151,7 @@ const createDesktopShell = ({
     });
     mainWindow.on('closed', () => { mainWindow = null; });
     mainWindow.webContents.on('did-finish-load', onStateReady);
-    await mainWindow.loadFile(rendererPath, {
-      query: { server: getServerLaunchMode() },
-    });
+    await mainWindow.loadFile(rendererPath);
   };
 
   async function openMainWindow({ userInitiated = false } = {}) {

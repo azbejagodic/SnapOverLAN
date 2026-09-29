@@ -413,7 +413,7 @@ test('server startup settles before the renderer loads and a failure still creat
     mainSource,
     /await loadSettings\(\);[\s\S]*?await startServer\(\)\.catch\(\(error\) => \{[\s\S]*?console\.error\('SnapOverLAN server startup failed:', error\);[\s\S]*?\}\);[\s\S]*?await desktopShell\.createWindow\(\);[\s\S]*?desktopShell\.showMainWindow\(\)/,
   );
-  assert.match(desktopShellSource, /await mainWindow\.loadFile\(rendererPath,/);
+  assert.match(desktopShellSource, /await mainWindow\.loadFile\(rendererPath\);/);
   assert.match(
     desktopServerManagerSource,
     /if \(serverOperationType === 'start'\) return serverOperation/,
@@ -629,6 +629,19 @@ test('Electron companion uses native dark title bar controls and remains draggab
   assert.match(rendererStyles, /\.titlebar-brand[\s\S]*?pointer-events:\s*none/);
   assert.match(rendererStyles, /\.title-row[\s\S]*?app-region:\s*drag/);
   assert.match(rendererStyles, /\.server-controls,[\s\S]*?\.header-actions[\s\S]*?app-region:\s*no-drag/);
+});
+
+test('desktop diagnostics is accessible, collapsed by default, read-only, and scrollable', () => {
+  const panel = rendererMarkup.match(/<details\b[^>]*id="diagnosticsPanel"[^>]*>/)?.[0];
+  assert.ok(panel);
+  assert.doesNotMatch(panel, /\b(?:hidden|open)\b/);
+  const content = rendererMarkup.match(/<details\b[^>]*id="diagnosticsPanel"[\s\S]*?<\/details>/)?.[0];
+  assert.match(content, /<summary>[\s\S]*?Server diagnostics/);
+  assert.doesNotMatch(content, /<(?:input|button|select|textarea)\b/);
+  const style = rendererStyles.match(/\.diagnostics-section\s*\{([^}]+)\}/)?.[1];
+  assert.ok(style);
+  assert.doesNotMatch(style, /display:\s*none|visibility:\s*hidden/);
+  assert.match(style, /overflow-y:\s*auto/);
 });
 
 test('retention controls are not exposed in desktop batch history', () => {

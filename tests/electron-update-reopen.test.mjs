@@ -159,7 +159,6 @@ const createHarness = ({
       return {
         start: async () => changeServerState('online'),
         getState: () => state,
-        getLaunchMode: () => 'owned',
       };
     },
     createElectronUpdateManager: async () => {

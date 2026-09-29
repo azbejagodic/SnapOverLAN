@@ -20,7 +20,6 @@ const diagnosticsSummary = document.getElementById('diagnosticsSummary');
 const diagnosticsList = document.getElementById('diagnosticsList');
 const diagnosticsWarning = document.getElementById('diagnosticsWarning');
 const diagnosticsUrls = document.getElementById('diagnosticsUrls');
-const diagnosticsPanel = document.getElementById('diagnosticsPanel');
 const qrModal = document.getElementById('qrModal');
 const closeQrBtn = document.getElementById('closeQrBtn');
 
@@ -37,7 +36,6 @@ let desktopServerState = 'offline';
 let serverRetryOperation = null;
 let backgroundModeEnabled = false;
 let autoCopyMessageTimer = null;
-const launchParams = new URLSearchParams(window.location.search);
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return 'Unknown size';
@@ -206,13 +204,6 @@ function addDiagnosticRow(label, value) {
   diagnosticsList.append(term, description);
 }
 
-function getLauncherStatus() {
-  const serverMode = launchParams.get('server');
-  if (serverMode === 'started') return 'Electron started the local server';
-  if (serverMode === 'reused') return 'Electron reused an existing server';
-  return 'Unknown launcher';
-}
-
 function renderDiagnostics(data) {
   if (!diagnosticsList) return;
   diagnosticsList.innerHTML = '';
@@ -223,7 +214,6 @@ function renderDiagnostics(data) {
     diagnosticsSummary.textContent = available ? 'Server online' : 'Server unavailable';
   }
   addDiagnosticRow('Server status', data.status || 'unknown');
-  addDiagnosticRow('Launcher', getLauncherStatus());
   addDiagnosticRow('Server source', data.launchSource || 'unknown');
   addDiagnosticRow('Bind host', data.bindHost || data.configuredHost || 'unknown');
   addDiagnosticRow('Port', String(data.port || 'unknown'));
@@ -245,10 +235,10 @@ function renderDiagnostics(data) {
       ? 'Phone checklist: use the LAN URL above, keep phone and PC on the same Wi-Fi, set the PC network to Private, and allow SnapOverLAN through Windows Firewall on Private networks if Windows asks.'
       : 'No private LAN IPv4 address was detected. Make sure the PC is connected to the same Wi-Fi as the phone, the network profile is Private, and Windows Firewall allows SnapOverLAN on Private networks.';
   }
-  if (!privateLanUrls.length && diagnosticsPanel) diagnosticsPanel.open = true;
 }
 
 function renderDiagnosticsError(error) {
+  renderUrlList(diagnosticsUrls, 'Detected LAN URLs', []);
   if (!diagnosticsList) return;
   diagnosticsList.innerHTML = '';
   if (diagnosticsSummary) {
@@ -260,7 +250,6 @@ function renderDiagnosticsError(error) {
     diagnosticsWarning.className = 'diagnostics-note warning';
     diagnosticsWarning.textContent = error.message || 'Check that the local server is running and reload the app.';
   }
-  if (diagnosticsPanel) diagnosticsPanel.open = true;
 }
 
 function renderQrCode(phoneUrl) {

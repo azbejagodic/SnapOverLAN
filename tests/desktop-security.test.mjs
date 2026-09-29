@@ -21,10 +21,11 @@ test('desktop popup and navigation handlers preserve safe local windows and bloc
       window = this;
     }
     setMenuBarVisibility() {}
-    async loadFile() {}
+    async loadFile(...args) { this.loadFileArgs = args; }
   }
-  const desktop = createDesktopShell({ BrowserWindow: FakeWindow, port: 8787, getServerLaunchMode: () => 'owned', onStateReady: () => {}, shell: { openExternal: (url) => external.push(url) } });
+  const desktop = createDesktopShell({ BrowserWindow: FakeWindow, port: 8787, rendererPath: 'app/renderer/index.html', onStateReady: () => {}, shell: { openExternal: (url) => external.push(url) } });
   await desktop.createWindow();
+  assert.deepEqual(window.loadFileArgs, ['app/renderer/index.html'], 'desktop loads without launcher query parameters');
   assert.deepEqual(window.options.webPreferences, { preload: undefined, contextIsolation: true, nodeIntegration: false, sandbox: true });
   assert.equal(window.handler({ url: 'http://localhost:8787/files/photo.jpg' }).action, 'allow');
   assert.equal(window.handler({ url: 'https://example.org/' }).action, 'deny');

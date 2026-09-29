@@ -245,7 +245,6 @@ desktopShell = createDesktopShell({
   Tray,
   appIconPath,
   getBackgroundMode: () => backgroundMode,
-  getServerLaunchMode: () => serverManager.getLaunchMode(),
   getServerOnline: () => serverState === 'online',
   isQuitAllowed: () => allowQuit,
   onBackgroundToggle: (enabled) => setBackgroundMode(enabled).catch((error) => console.error(error)),

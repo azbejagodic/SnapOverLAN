@@ -429,7 +429,6 @@ const createServerManager = ({
   return {
     clearAutoCopyUnavailable: () => { autoCopyUnavailableReason = ''; },
     ensureOwnedForAutoCopy,
-    getLaunchMode: () => serverLaunchMode,
     getOperation: () => serverOperation,
     getState,
     isOwnedProcess: (serverProcess) => ownedServerProcess === serverProcess,

@@ -89,7 +89,7 @@ The desktop version comes from `package.json`; for the V2 release, `extension/ma
 The desktop app:
 
 - starts and manages the local server, or reuses a compatible server already on port `8787`;
-- reports server and LAN diagnostics;
+- provides a read-only **Server diagnostics** section below recent uploads; click its heading to expand it (collapsed by default);
 - displays the preferred phone URL and a QR code;
 - lists up to 50 recent upload batches;
 - lets you make an older batch current, delete one batch, or clear all batches;
@@ -139,7 +139,7 @@ SnapOverLAN stores a persistent eight-character device ID in its runtime data di
 http://snap-a1b2c3d4.local:8787
 ```
 
-When mDNS starts successfully, the desktop QR code prefers this stable address so ordinary DHCP address changes do not require a new QR code. The diagnostics panel also lists detected LAN IPv4 addresses. If `.local` discovery is unavailable, SnapOverLAN falls back to an address such as `http://192.168.1.16:8787`.
+When mDNS starts successfully, the desktop QR code prefers this stable address so ordinary DHCP address changes do not require a new QR code. Expand **Server diagnostics** in the desktop window to see detected LAN IPv4 addresses, the live server source, storage paths, and troubleshooting guidance. Failed status requests show an error and clear previously listed LAN links. If `.local` discovery is unavailable, SnapOverLAN falls back to an address such as `http://192.168.1.16:8787`.
 
 ## Local network access and security
 

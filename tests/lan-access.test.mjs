@@ -150,7 +150,6 @@ test('LAN clients receive 404 for batch, file, settings, diagnostics, and contro
       body: JSON.stringify({ maxBatches: 1 }),
     }),
     request('/api/server-status', { lan: true }),
-    request('/api/upload-status', { lan: true }),
     request('/api/auto-copy', { lan: true }),
     request('/api/server-control', { lan: true }),
     request('/api/server-shutdown', { lan: true, method: 'POST' }),

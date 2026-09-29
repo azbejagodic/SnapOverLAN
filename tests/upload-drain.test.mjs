@@ -151,7 +151,7 @@ for (const count of [0, 1]) {
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: 'Server is shutting down. Please try again.' });
     assert.equal(JSON.stringify(lifecycle.status), before);
-    const status = await fetch(`http://127.0.0.1:${server.address().port}/api/upload-status`).then((res) => res.json());
+    const status = lifecycle.status;
     assert.equal(status.draining, true);
     assert.equal(status.activeUploads, count);
     active?.emit('finish');
@@ -238,7 +238,16 @@ for (const transport of ['ipc', 'localhost']) {
     const port = probe.address().port;
     await new Promise((resolve) => probe.close(resolve));
     const root = await mkdtemp(path.join(os.tmpdir(), 'snapoverlan-drain-'));
-    const child = spawn(process.execPath, ['app/server/index.js'], {
+    // Observe the real child lifecycle without adding a production status API.
+    const lifecycleProbe = `
+      import { uploadLifecycle } from ${JSON.stringify(new URL('../app/server/upload-lifecycle.js', import.meta.url).href)};
+      process.on('message', (message) => {
+        if (message?.type === 'test:lifecycle-snapshot') {
+          process.send({ type: 'test:lifecycle-snapshot', status: uploadLifecycle.status });
+        }
+      });
+    `;
+    const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(lifecycleProbe)}`, 'app/server/index.js'], {
       env: { ...process.env, SNAPOVERLAN_PORT: String(port), SNAPOVERLAN_DATA_DIR: root },
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true,
     });
@@ -256,7 +265,19 @@ for (const transport of ['ipc', 'localhost']) {
       try { return (await fetch(`${url}/server-status`).then((res) => res.json())).status === 'listening'; }
       catch { return false; }
     });
-    const status = () => fetch(`${url}/upload-status`).then((res) => res.json());
+    const status = () => new Promise((resolve, reject) => {
+      const listener = (message) => {
+        if (message?.type !== 'test:lifecycle-snapshot') return;
+        child.removeListener('message', listener);
+        resolve(message.status);
+      };
+      child.on('message', listener);
+      child.send({ type: 'test:lifecycle-snapshot' }, (error) => {
+        if (!error) return;
+        child.removeListener('message', listener);
+        reject(error);
+      });
+    });
     const a = await heldUpload(t, port);
     const b = await heldUpload(t, port);
     await until(async () => (await status()).activeUploads === 2);

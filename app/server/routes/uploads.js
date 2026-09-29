@@ -10,7 +10,7 @@ import {
   validateUploadedFiles,
 } from '../storage.js';
 
-const { status: uploadStatus, markUploadStarted } = uploadLifecycle;
+const { markUploadStarted } = uploadLifecycle;
 
 const createUploadCompletedEvent = (req) => {
   const firstImage = (req.files || []).find((file) => (
@@ -68,7 +68,6 @@ const createUploadsRouter = ({ onUploadCompleted = () => {} } = {}) => {
     req.uploadProcessing.catch(next);
   });
 
-  router.get('/upload-status', (_req, res) => res.json(uploadStatus));
   return router;
 };
 

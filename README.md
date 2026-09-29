@@ -260,7 +260,7 @@ Important localhost-only routes:
 - `GET /api/latest` and `GET /files/:name` — current batch metadata and files
 - `/api/batches` and `/api/batches/:id` — list, inspect, select, and delete batches; individual batch files are available through `/api/batches/:id/files/:name`
 - `GET`/`PUT /api/storage-settings` — optional time-based retention
-- `GET /api/upload-status` and `/api/server-status` — local state and diagnostics
+- `GET /api/server-status` — local state and diagnostics
 - `GET`/`PUT /api/auto-copy` — desktop Auto-copy integration
 
 Additional lifecycle routes are reserved for the Electron app and intentionally undocumented.

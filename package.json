@@ -83,12 +83,6 @@
         }
       ]
     },
-    "mac": {
-      "icon": "assets/electron/app.icns"
-    },
-    "linux": {
-      "icon": "assets/electron"
-    },
     "nsis": {
       "oneClick": false,
       "perMachine": true,

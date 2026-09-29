@@ -2,13 +2,13 @@
 
 ![SnapOverLAN](assets/branding/snapoverlan-logo-horizontal.svg)
 
-SnapOverLAN is a Windows phone-to-PC photo transfer bridge for a trusted local network. Open the phone interface from a QR code, upload a batch of photos, then download the batch from the desktop app or copy individual photos from the Chrome/Brave extension. Transfers and stored photos remain on the PC; no cloud service is involved.
+SnapOverLAN is a Windows phone-to-PC photo transfer bridge for a trusted local network. Open the phone interface from a QR code, upload a batch of photos, then download the batch from the desktop app or copy individual photos from the Chrome/Brave extension. Photo transfer and storage are local, with no cloud photo service. Installed builds use GitHub Releases for update checks and downloads.
 
 ## Key features
 
 - Phone camera and gallery upload over the local network
 - JPEG, PNG, WebP, HEIC, and HEIF support
-- Up to 10 photos per batch, with a 20 MB limit per photo
+- Up to 10 photos per batch, with a 20 MiB limit per photo
 - Fast Upload optimization for large photos
 - Stable `.local` phone address with direct-IP fallback
 - Recent batch history, selection, download, and deletion in the desktop app
@@ -18,7 +18,7 @@ SnapOverLAN is a Windows phone-to-PC photo transfer bridge for a trusted local n
 
 ## How it works
 
-1. The Electron desktop app starts or reuses the SnapOverLAN server on TCP port `8787` and shows a phone URL and QR code.
+1. The Electron desktop app starts a server or reuses a verified current SnapOverLAN server on TCP port `8787`, then shows a phone URL and QR code.
 2. A phone on the same network opens that address and uploads a photo batch through the browser-based phone interface.
 3. The desktop app records the batch. Use the desktop app to manage or download batches, or the extension to copy/open photos from the current batch.
 
@@ -29,7 +29,7 @@ The Express server is an internal part of the desktop app. A standalone server c
 - Windows x64 PC
 - Phone and PC on the same trusted/private local network
 - Chrome or Brave if using the extension
-- Node.js 24.19 or newer when running or building from source
+- Node.js 24.19.0 or newer when running or building from source
 
 The current end-user build target is Windows. Tagged releases are configured to provide the Windows Setup executable, portable executable, and browser-extension ZIP through [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases). If the available release does not yet include those assets, use the source or local-build instructions below.
 
@@ -45,7 +45,7 @@ Download `SnapOverLAN-<version>-portable-x64.exe` from the same release and run 
 
 ### Browser extension
 
-For the V2 release, download and extract `SnapOverLAN-extension-2.0.0.zip` from the same release. The extension version is aligned with the desktop product version for this release. Then:
+Download and extract `SnapOverLAN-extension-<version>.zip` from the same release. Then:
 
 1. Open `chrome://extensions` or `brave://extensions`.
 2. Enable **Developer Mode**.
@@ -74,13 +74,13 @@ npm ci
 npm run release:build
 ```
 
-The generated files are written to `dist/`:
+The user downloads are written to `dist/`:
 
 - `SnapOverLAN-Setup-<version>-x64.exe`
 - `SnapOverLAN-<version>-portable-x64.exe`
 - `SnapOverLAN-extension-<version>.zip`
 
-The desktop version comes from `package.json`; for the V2 release, `extension/manifest.json` uses the same product version.
+The build also produces `latest.yml` and the installer `.blockmap` for the updater. The desktop version comes from `package.json`; release CI requires `extension/manifest.json` to use the same version.
 
 ## Using SnapOverLAN
 
@@ -88,7 +88,7 @@ The desktop version comes from `package.json`; for the V2 release, `extension/ma
 
 The desktop app:
 
-- starts and manages the local server, or reuses a compatible server already on port `8787`;
+- starts and manages the local server, or reuses only a verified current SnapOverLAN server on port `8787`;
 - provides a read-only **Server diagnostics** section below recent uploads; click its heading to expand it (collapsed by default);
 - displays the preferred phone URL and a QR code;
 - lists up to 50 recent upload batches;
@@ -97,6 +97,8 @@ The desktop app:
 - supports Background Mode, which hides the window while keeping the server available from the system tray.
 
 Selecting an older batch also makes it the batch shown by the extension. A desktop download opens the Downloads folder after the files are saved.
+
+Legacy servers are recognized only to show a helpful error; they are never reused. Background Mode is off by default. When enabled, closing the window hides it; when disabled, closing requests Quit. Tray **Quit** also requests shutdown. Active uploads block Quit and update restart: wait for the upload to finish, then retry.
 
 ### Phone interface
 
@@ -109,7 +111,7 @@ Open the QR-code address in the phone's browser. The interface provides:
 - the Fast Upload toggle; and
 - one action to upload the selected batch.
 
-Supported formats are JPEG, PNG, WebP, HEIC, and HEIF. Each photo sent to the server must be no larger than 20 MB. If more than 10 supported photos are chosen, only the available tray slots are filled.
+Supported upload formats are JPEG, PNG, WebP, HEIC, and HEIF. Each photo sent to the server must be no larger than 20 MiB (shown as 20 MB in the UI). If more than 10 supported photos are chosen, only the available tray slots are filled.
 
 The included web app manifest supports adding SnapOverLAN to the phone's home screen where the browser offers that option. It is served from the PC over the local network and is not an offline app.
 
@@ -131,6 +133,18 @@ The extension connects to `http://localhost:8787`, refreshes the current batch, 
 
 The extension also controls **Auto-copy**, which is off by default. When enabled, the Electron app copies the first photo from each newly uploaded batch to the Windows clipboard. The preference is stored by the desktop app and persists across restarts.
 
+Copy and Auto-copy have a 40 MP limit and require successful decoding. Supported upload formats do not guarantee browser Copy or desktop clipboard support: HEIC/HEIF may upload successfully but fail preview, Copy, or Auto-copy depending on decoder support.
+
+The extension declares `clipboardWrite` and HTTP host access for `localhost` and `127.0.0.1` on port `8787`. It does not request arbitrary LAN-host access.
+
+## Updates
+
+Only installed Windows builds use the updater. They check GitHub Releases after startup and every 12 hours, and automatically download available updates. Explicitly reopening the app also checks for updates or re-presents an already downloaded update. Periodic checks do not re-present a dismissed prompt.
+
+After download, choose **Later** or **Restart & Update**. Ordinary Quit does not install the update. Active uploads block installation; wait for the upload to finish and retry **Restart & Update**. During installation, a native NSIS progress window appears. Closing that window hides it rather than cancelling installation; the app reopens after the update.
+
+Portable and development builds do not use the updater. Portable users download a newer release and replace the executable manually.
+
 ## Stable phone address
 
 SnapOverLAN stores a persistent eight-character device ID in its runtime data directory and advertises a hostname such as:
@@ -139,11 +153,13 @@ SnapOverLAN stores a persistent eight-character device ID in its runtime data di
 http://snap-a1b2c3d4.local:8787
 ```
 
-When mDNS starts successfully, the desktop QR code prefers this stable address so ordinary DHCP address changes do not require a new QR code. Expand **Server diagnostics** in the desktop window to see detected LAN IPv4 addresses, the live server source, storage paths, and troubleshooting guidance. Failed status requests show an error and clear previously listed LAN links. If `.local` discovery is unavailable, SnapOverLAN falls back to an address such as `http://192.168.1.16:8787`.
+When mDNS starts successfully and a usable private LAN address is available, the desktop QR code prefers this stable address so ordinary DHCP address changes do not require a new QR code. If server-side mDNS is unavailable, it automatically uses an available LAN IP URL such as `http://192.168.1.16:8787`.
+
+The desktop cannot detect a phone's failure to resolve `.local`. If that happens while mDNS is running, use one of the LAN IP URLs shown in **Server diagnostics**. Expand that section for detected addresses, the live server source, storage paths, and troubleshooting guidance. Failed status requests show an error and clear previously listed LAN links.
 
 ## Local network access and security
 
-SnapOverLAN is designed for a trusted private network. It does not provide accounts, authentication, HTTPS, or protection suitable for an untrusted or public network. Anyone who can reach port `8787` on the LAN can load the phone interface and submit a supported photo batch.
+SnapOverLAN is designed for a trusted private network. It provides no user accounts, authenticated phone uploads, or HTTPS, and is unsuitable for an untrusted or public network. Anyone who can reach port `8787` on the LAN can load the phone interface and submit a supported photo batch. Internal desktop lifecycle/control uses a shutdown/control token.
 
 Non-loopback clients are intentionally limited to the phone interface and its static assets plus `POST /api/upload`. Saved batches, stored-file reads, diagnostics, Auto-copy, and server-control operations return `404` to LAN clients and remain available only through loopback (`localhost`/`127.0.0.1`) for the desktop app and extension.
 
@@ -173,10 +189,12 @@ If the phone cannot connect:
 
 Each successful non-empty upload creates a batch and makes it current. SnapOverLAN retains at most the 50 newest batches; adding a 51st removes the oldest. Count-based cleanup runs at server startup and after uploads. Batches do not expire with age, and users can manually delete individual batches or clear all batches.
 
-Runtime storage is separate from application files:
+Runtime storage is separate from application files. Default locations are:
 
 - Development and standalone server: `data/` in the repository
 - Packaged desktop app: `data/` inside Electron's user-data directory, shown in **Server diagnostics** (normally `%APPDATA%\SnapOverLAN\data` on Windows)
+
+`SNAPOVERLAN_DATA_DIR` can override standalone/development storage. Portable builds also use Electron's user-data directory, not the executable directory. A reused server retains its own storage location; consult **Server diagnostics** for the active paths.
 
 The runtime data includes batch directories, the current-batch pointer, device identity, and upload staging. It is excluded from packaged distributions.
 
@@ -226,7 +244,11 @@ Build all three release artifacts:
 npm run release:build
 ```
 
-Pushing a tag that exactly matches `v<package.json version>` runs `.github/workflows/release.yml` on Windows, installs with `npm ci`, runs the automated tests, builds all release artifacts, and creates or updates the corresponding GitHub Release. CI builds are unsigned unless a maintainer later configures Windows code signing.
+### CI and releases
+
+Normal CI (`.github/workflows/ci.yml`) runs on pushes to `main` and pull requests targeting `main`. It uses a Windows runner and Node 24.19.0 to run `npm ci` and `node --test`, without building or publishing artifacts.
+
+Release CI (`.github/workflows/release.yml`) runs for version tags such as `v2.0.0`. Before building, it requires the tag to equal `v<package version>` and the extension version to equal the package version. It uses Windows and Node 24.19.0, installs dependencies, runs tests, builds and validates the Windows artifacts and extension ZIP, then creates or updates the GitHub Release. User downloads are the Setup EXE, portable EXE, and extension ZIP; `latest.yml` and the installer `.blockmap` are updater metadata. Release builds are unsigned unless a maintainer configures Windows code signing.
 
 ### Testing
 
@@ -258,7 +280,10 @@ LAN-accessible surface:
 Important localhost-only routes:
 
 - `GET /api/latest` and `GET /files/:name` — current batch metadata and files
-- `/api/batches` and `/api/batches/:id` — list, inspect, select, and delete batches; individual batch files are available through `/api/batches/:id/files/:name`
+- `GET`/`DELETE /api/batches` — list or clear batches
+- `GET`/`DELETE /api/batches/:id` — inspect or delete one batch
+- `POST /api/batches/:id/select` — make a batch current
+- `GET /api/batches/:id/files/:name` — read an individual batch file
 - `GET /api/server-status` — local state and diagnostics
 - `GET`/`PUT /api/auto-copy` — desktop Auto-copy integration
 
@@ -282,7 +307,7 @@ SnapOverLAN/
     electron/               generated desktop and tray assets
     fonts/                  bundled font licensing
   build/                    NSIS installer customization
-  scripts/                  icon generation and Electron smoke runner
+  scripts/                  icon generation, extension packaging, Electron smoke runner
   tests/                    server, PWA, desktop, storage, and mDNS tests
   data/                     development runtime data (ignored)
   dist/                     generated Windows distributions (ignored)

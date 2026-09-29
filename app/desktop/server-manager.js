@@ -49,7 +49,7 @@ const createServerManager = ({
     for (let attempt = 0; attempt < 50; attempt += 1) {
       if (serverProcess.exitCode !== null || ownedServerProcess !== serverProcess) return null;
       const identity = await client.getServerIdentity();
-      if (identity?.shutdownToken) return identity;
+      if (identity?.kind === 'current' && identity.shutdownToken) return identity;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return null;
@@ -138,7 +138,7 @@ const createServerManager = ({
     if (serverState === 'online') return getState();
     setState('starting');
     let existingIdentity = await client.getServerIdentity();
-    if (existingIdentity?.shutdownToken && getAutoCopyEnabled()) {
+    if (existingIdentity?.kind === 'current' && existingIdentity.shutdownToken && getAutoCopyEnabled()) {
       const stoppedForOwnership = await stopVerifiedReusedServerForAutoCopy(existingIdentity);
       if (stoppedForOwnership) {
         existingIdentity = null;
@@ -147,14 +147,14 @@ const createServerManager = ({
         autoCopyUnavailableReason = '';
       } else {
         existingIdentity = await client.getServerIdentity();
-        if (existingIdentity?.shutdownToken) {
+        if (existingIdentity?.kind === 'current' && existingIdentity.shutdownToken) {
           autoCopyUnavailableReason = AUTO_COPY_UNAVAILABLE_MESSAGE;
         } else if (!existingIdentity && !(await client.isPortInUse())) {
           autoCopyUnavailableReason = '';
         }
       }
     }
-    if (existingIdentity?.shutdownToken) {
+    if (existingIdentity?.kind === 'current' && existingIdentity.shutdownToken) {
       verifiedShutdownToken = existingIdentity.shutdownToken;
       serverLaunchMode = 'reused';
       await writeStartupLog('server-reused', {
@@ -388,7 +388,7 @@ const createServerManager = ({
     });
     if (!stopped) {
       const remainingIdentity = await client.getServerIdentity();
-      if (remainingIdentity?.shutdownToken) {
+      if (remainingIdentity?.kind === 'current' && remainingIdentity.shutdownToken) {
         verifiedShutdownToken = remainingIdentity.shutdownToken;
         serverLaunchMode = 'reused';
         autoCopyUnavailableReason = AUTO_COPY_UNAVAILABLE_MESSAGE;

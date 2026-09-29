@@ -6,6 +6,8 @@ import { isPrivateLanUrl } from '../app/lan-address.js';
 
 const source = (await readFile(new URL('../app/renderer/app.js', import.meta.url), 'utf8'))
   .replace(/^import.*;\r?\n/gm, '');
+const batchSource = (await readFile(new URL('../app/renderer/batch-history.js', import.meta.url), 'utf8'))
+  .replace(/^export.*;\r?\n/gm, '');
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const lanUrl = 'http://192.168.1.20:8787';
 const stableUrl = 'http://snap-test.local:8787';
@@ -16,7 +18,9 @@ const status = (urls = [lanUrl]) => ({
 });
 
 class Element {
-  textContent = '';
+  _textContent = '';
+  get textContent() { return this._textContent; }
+  set textContent(value) { this._textContent = value; this.children = []; }
   title = '';
   hidden = true;
   disabled = false;
@@ -40,6 +44,7 @@ const createHarness = async (initialStatus = status()) => {
   let interval;
   const requests = [];
   const qrValues = [];
+  const downloads = [];
   const elements = Object.fromEntries([
     'refreshBtn', 'qrBtn', 'connectionPill', 'backgroundToggleBtn', 'retryServerBtn',
     'phoneUrl', 'phoneQr', 'qrFallback', 'batchMessage', 'batchesList',
@@ -50,16 +55,18 @@ const createHarness = async (initialStatus = status()) => {
   Object.defineProperty(navigator, 'onLine', {
     get() { assert.fail('internet/browser connectivity must not determine LAN availability'); },
   });
-  const renderer = runInNewContext(`${source}\n({ getState: () => desktopServerState })`, {
+  const renderer = runInNewContext(`${batchSource}\n${source}\n({ getState: () => desktopServerState })`, {
     URL, console, navigator, isPrivateLanUrl,
     fetch: () => assert.fail('renderer must not probe external connectivity'),
     document: {
       hidden: false,
       getElementById: (id) => elements[id] || null,
       createElement: () => new Element(),
+      createDocumentFragment: () => new Element(),
       addEventListener() {},
     },
     window: {
+      confirm: () => true,
       get location() { assert.fail('diagnostics must not read renderer query parameters'); },
       addEventListener() {},
       setInterval: (callback, ms) => { assert.equal(ms, 5000); interval = callback; return 1; },
@@ -68,12 +75,15 @@ const createHarness = async (initialStatus = status()) => {
         getServerState: async () => ({ state: 'online' }),
         getBackgroundMode: async () => false,
         onDesktopStateChanged: (listener) => { stateListener = listener; },
+        downloadBatch: async (id) => { downloads.push(id); },
       },
     },
     drawQrCode: (_canvas, url) => qrValues.push(url),
-    createBatchHistory: () => ({ bind() {}, load: async () => {} }),
     fetchJson: async (resource) => {
       requests.push(resource);
+      if (resource.startsWith('/api/batches')) return { batches: [{
+        id: 'batch_test', current: true, fileCount: 1, totalSize: 10, createdAt: '2026-01-01',
+      }] };
       assert.equal(resource, '/api/server-status', 'health and LAN URLs use the same local snapshot');
       if (response instanceof Error) throw response;
       return response;
@@ -81,7 +91,7 @@ const createHarness = async (initialStatus = status()) => {
   });
   await flush();
   return {
-    elements, qrValues, requests, renderer,
+    elements, qrValues, requests, downloads, renderer,
     setResponse: (value) => { response = value; },
     refresh: () => interval(),
     emitServerState: (state) => stateListener({ server: { state }, backgroundMode: false }),
@@ -185,7 +195,59 @@ test('LAN availability requires no internet connectivity API or external request
   const h = await createHarness({ ...status(), stableUrl: '' });
   await h.refresh();
   assert.equal(h.elements.connectionPill.textContent, 'Server online');
-  assert.deepEqual(h.requests, ['/api/server-status', '/api/server-status']);
+  assert.deepEqual(h.requests, ['/api/server-status', '/api/batches', '/api/server-status', '/api/batches']);
+});
+
+const legacyStatus = () => {
+  const { application, protocolVersion, ...legacy } = status();
+  return { ...legacy, pid: 123, configuredHost: '0.0.0.0', bindHost: '0.0.0.0', port: 8787,
+    runtimeDataDir: 'data', latestDir: 'latest', uploadTempDir: 'upload-tmp' };
+};
+
+for (const [name, rejectedStatus] of [
+  ['legacy', legacyStatus()],
+  ['unrelated', { ...status(), application: 'OtherService' }],
+  ['wrong protocol', { ...status(), protocolVersion: 2 }],
+  ['not listening', { ...status(), status: 'starting' }],
+]) {
+  test(`${name} status cannot enable renderer, QR, or batch requests`, async () => {
+    const h = await createHarness(rejectedStatus);
+    h.emitServerState('online');
+    await h.elements.clearBatchesBtn.click();
+    await h.elements.downloadCurrentBatchBtn.click();
+    assert.equal(h.renderer.getState(), 'offline');
+    assert.equal(h.elements.backgroundToggleBtn.disabled, true);
+    assert.equal(h.elements.qrBtn.disabled, true);
+    assert.equal(h.elements.phoneUrl.textContent, '');
+    assert.equal(h.elements.clearBatchesBtn.disabled, true);
+    assert.equal(h.elements.downloadCurrentBatchBtn.disabled, true);
+    assert.equal(h.elements.batchesList.children.length, 0);
+    assert.deepEqual(h.requests, ['/api/server-status']);
+    assert.deepEqual(h.downloads, []);
+  });
+}
+
+test('current server batch controls are revoked on legacy replacement and recover only after validation', async () => {
+  const h = await createHarness();
+  const buttons = h.elements.batchesList.children[0].children[0].children[1].children;
+  assert.equal(h.elements.clearBatchesBtn.disabled, false);
+  assert.equal(h.elements.downloadCurrentBatchBtn.disabled, false);
+  await h.elements.downloadCurrentBatchBtn.click();
+  assert.deepEqual(h.downloads, ['batch_test']);
+  h.setResponse(legacyStatus());
+  await h.refresh();
+  const before = h.requests.slice();
+  for (const button of buttons) await button.click();
+  await h.elements.clearBatchesBtn.click();
+  await h.elements.downloadCurrentBatchBtn.click();
+  assert.deepEqual(h.requests, before);
+  assert.deepEqual(h.downloads, ['batch_test']);
+  assert.equal(h.elements.batchesList.children.length, 0);
+  h.setResponse(status());
+  await h.refresh();
+  assert.equal(h.renderer.getState(), 'online');
+  assert.equal(h.elements.clearBatchesBtn.disabled, false);
+  assert.deepEqual(h.requests.slice(-2), ['/api/server-status', '/api/batches']);
 });
 
 test('diagnostics uses live server source and preserves the user expansion choice', async () => {

@@ -326,7 +326,7 @@ test('a failed forced stop retains the owned child so cleanup can be retried', a
   const createManager = runInNewContext(`${managerSource}\ncreateServerManager`, {
     console: { info() {}, warn() {}, error() {} },
     createServerClient: () => ({
-      getServerIdentity: async () => spawned ? { shutdownToken: 'a'.repeat(64) } : null,
+      getServerIdentity: async () => spawned ? { kind: 'current', shutdownToken: 'a'.repeat(64) } : null,
       isPortInUse: async () => false,
     }),
     path,
@@ -404,7 +404,7 @@ test('server identity contract recognizes current, legacy, and unrelated respons
     pid: 123,
   }), 'unrelated');
   assert.match(desktopServerManagerSource, /An older SnapOverLAN server is running\. Stop it once and restart the app\./);
-  assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.shutdownToken\)/);
+  assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.kind === 'current' && existingIdentity.shutdownToken\)/);
 });
 
 test('server startup settles before the renderer loads and a failure still creates the window', () => {
@@ -418,7 +418,7 @@ test('server startup settles before the renderer loads and a failure still creat
     desktopServerManagerSource,
     /if \(serverOperationType === 'start'\) return serverOperation/,
   );
-  assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.shutdownToken\)[\s\S]*?serverLaunchMode = 'reused'/);
+  assert.match(desktopServerManagerSource, /if \(existingIdentity\?\.kind === 'current' && existingIdentity.shutdownToken\)[\s\S]*?serverLaunchMode = 'reused'/);
   assert.doesNotMatch(mainSource, /serverAutoStart/);
 });
 
@@ -522,7 +522,7 @@ test('verified reused servers are replaced by one owned child when auto-copy is 
   );
   assert.match(
     desktopServerManagerSource,
-    /existingIdentity\?\.shutdownToken && getAutoCopyEnabled\(\)[\s\S]*?stopVerifiedReusedServerForAutoCopy\(existingIdentity\)/,
+    /existingIdentity\?\.kind === 'current' && existingIdentity.shutdownToken && getAutoCopyEnabled\(\)[\s\S]*?stopVerifiedReusedServerForAutoCopy\(existingIdentity\)/,
   );
   assert.match(
     desktopServerManagerSource,

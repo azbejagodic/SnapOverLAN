@@ -20,19 +20,22 @@ const createBatchHistory = ({
 }) => {
   let batches = [];
   let refreshPromise = null;
+  let available = false;
+  let availabilityRevision = 0;
 
   const getCurrentBatch = () => batches.find((batch) => batch.current);
 
   const updateDownloadButton = () => {
     if (!downloadButton) return;
     const currentBatch = getCurrentBatch();
-    downloadButton.disabled = !currentBatch || currentBatch.fileCount === 0;
+    downloadButton.disabled = !available || !currentBatch || currentBatch.fileCount === 0;
   };
 
   const render = () => {
     if (!batchesList) return;
     batchesList.textContent = '';
     updateDownloadButton();
+    if (!available) return;
 
     if (!batches.length) {
       const empty = document.createElement('p');
@@ -75,11 +78,24 @@ const createBatchHistory = ({
     batchesList.appendChild(fragment);
   };
 
+  const setAvailable = (value) => {
+    if (available !== value) availabilityRevision += 1;
+    available = value;
+    if (clearButton) clearButton.disabled = !available;
+    if (!available) {
+      batches = [];
+      render();
+    }
+  };
+
   const load = async () => {
+    if (!available) return;
     if (refreshPromise) return refreshPromise;
+    const revision = availabilityRevision;
     refreshPromise = (async () => {
       try {
         const batchData = await fetchJson('/api/batches');
+        if (!available || revision !== availabilityRevision) return;
         batches = Array.isArray(batchData.batches) ? batchData.batches : [];
         render();
       } catch (error) {
@@ -97,6 +113,7 @@ const createBatchHistory = ({
   };
 
   async function selectBatch(id) {
+    if (!available) return;
     try {
       await fetchJson(`/api/batches/${encodeURIComponent(id)}/select`, { method: 'POST' });
       await refresh();
@@ -106,7 +123,8 @@ const createBatchHistory = ({
   }
 
   async function deleteBatch(batch) {
-    if (!window.confirm(`Delete the batch from ${formatBatchDate(batch.createdAt)}?`)) return;
+    if (!available) return;
+    if (!window.confirm(`Delete the batch from ${formatBatchDate(batch.createdAt)}?`) || !available) return;
     try {
       await fetchJson(`/api/batches/${encodeURIComponent(batch.id)}`, { method: 'DELETE' });
       await refresh();
@@ -116,7 +134,8 @@ const createBatchHistory = ({
   }
 
   const clearAll = async () => {
-    if (!window.confirm('Clear all saved batches? This cannot be undone.')) return;
+    if (!available) return;
+    if (!window.confirm('Clear all saved batches? This cannot be undone.') || !available) return;
     try {
       await fetchJson('/api/batches', { method: 'DELETE' });
       await refresh();
@@ -127,7 +146,7 @@ const createBatchHistory = ({
 
   const downloadCurrentBatch = async () => {
     const currentBatch = getCurrentBatch();
-    if (!currentBatch || currentBatch.fileCount === 0 || !downloadButton) return;
+    if (!available || !currentBatch || currentBatch.fileCount === 0 || !downloadButton) return;
 
     downloadButton.disabled = true;
     downloadButton.textContent = 'Downloading...';
@@ -144,11 +163,12 @@ const createBatchHistory = ({
   };
 
   const bind = () => {
+    setAvailable(false);
     downloadButton?.addEventListener('click', downloadCurrentBatch);
     clearButton?.addEventListener('click', clearAll);
   };
 
-  return { bind, load };
+  return { bind, load, setAvailable };
 };
 
 export { createBatchHistory };

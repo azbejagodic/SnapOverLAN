@@ -86,7 +86,7 @@ const createServerClient = ({ port, requestTimeoutMs = 1500 }) => {
       if (control?.service !== SERVER_CONTROL_ID
         || typeof control.shutdownToken !== 'string'
         || !/^[a-f0-9]{64}$/.test(control.shutdownToken)
-        || kind === 'unrelated') {
+        || kind !== 'current') {
         throw new Error('Invalid SnapOverLAN control response');
       }
       return { kind, server: control.server, shutdownToken: control.shutdownToken };

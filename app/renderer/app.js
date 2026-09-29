@@ -110,8 +110,8 @@ function renderDesktopControls() {
 }
 
 function setDesktopServerState(state) {
-  desktopServerState = state || 'offline';
-  if (desktopServerState !== 'online') {
+  desktopServerState = state === 'online' && !lastServerStatusData ? 'offline' : state || 'offline';
+  if (state !== 'online') {
     backgroundModeEnabled = false;
   }
   renderDesktopControls();
@@ -128,6 +128,7 @@ async function syncDesktopControls() {
     setDesktopServerState(server?.state);
     if (server?.state === 'error' || server?.state === 'offline') {
       lastServerStatusData = null;
+      batchHistory?.setAvailable(false);
       renderPhoneSetup(null);
       renderStatus({ state: 'offline' });
     }
@@ -303,17 +304,11 @@ async function loadServerStatus({ showActivity = false } = {}) {
     const currentSnapOverLAN = status.status === 'listening'
       && status.application === 'SnapOverLAN'
       && status.protocolVersion === 1;
-    const legacySnapOverLAN = status.status === 'listening'
-      && status.application === undefined
-      && status.protocolVersion === undefined
-      && Number.isInteger(status.pid)
-      && typeof status.runtimeDataDir === 'string'
-      && typeof status.latestDir === 'string'
-      && typeof status.uploadTempDir === 'string';
-    if (!currentSnapOverLAN && !legacySnapOverLAN) {
+    if (!currentSnapOverLAN) {
       throw new Error('Port 8787 is responding, but it is not a verified SnapOverLAN server.');
     }
     lastServerStatusData = status;
+    batchHistory.setAvailable(true);
     renderPhoneSetup({ urls: status.lanUrls, primaryUrl: status.primaryLanUrl, stableUrl: status.stableUrl });
     if (desktopServerState !== 'starting' && desktopServerState !== 'stopping') {
       setDesktopServerState('online');
@@ -323,6 +318,7 @@ async function loadServerStatus({ showActivity = false } = {}) {
     return status;
   } catch (error) {
     lastServerStatusData = null;
+    batchHistory.setAvailable(false);
     renderPhoneSetup(null);
     if (desktopServerState !== 'starting'
       && desktopServerState !== 'stopping'
@@ -346,10 +342,7 @@ async function refreshDashboard({ source = 'manual' } = {}) {
   dashboardRefreshInFlight = true;
   if (showActivity) setDashboardRefreshBusy(true);
   try {
-    await Promise.all([
-      loadServerStatus({ showActivity }),
-      batchHistory.load(),
-    ]);
+    if (await loadServerStatus({ showActivity })) await batchHistory.load();
   } finally {
     dashboardRefreshInFlight = false;
     if (showActivity) setDashboardRefreshBusy(false);
@@ -447,6 +440,7 @@ window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
   if (server?.state === 'starting') renderStatus({ state: 'checking' });
   else if (server?.state === 'error' || server?.state === 'offline') {
     lastServerStatusData = null;
+    batchHistory.setAvailable(false);
     renderPhoneSetup(null);
     renderStatus({ state: 'offline' });
   }

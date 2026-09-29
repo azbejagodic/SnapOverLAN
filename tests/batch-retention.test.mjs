@@ -9,12 +9,12 @@ process.env.SNAPOVERLAN_DATA_DIR = dataRoot;
 
 const {
   clearAllBatches,
+  deleteBatch,
   ensureStorageDirectories,
   finalizeUploadedBatch,
   listBatches,
   listLatestFiles,
   selectBatch,
-  updateStorageSettings,
 } = await import('../app/server/storage.js');
 
 const batchesDir = path.join(dataRoot, 'batches');
@@ -22,7 +22,6 @@ after(() => fs.rm(dataRoot, { recursive: true, force: true }));
 beforeEach(async () => {
   await ensureStorageDirectories();
   await clearAllBatches();
-  await updateStorageSettings({ retentionDays: null });
 });
 
 async function createBatch(id, createdAt) {
@@ -33,33 +32,17 @@ async function createBatch(id, createdAt) {
   return batchDir;
 }
 
-test('retention changes immediately delete only batches beyond the new cutoff', async () => {
-  const now = Date.now();
-  await createBatch('batch_older_than_30', new Date(now - (31 * 86400000)).toISOString());
-  await createBatch('batch_older_than_7', new Date(now - (8 * 86400000)).toISOString());
-  await createBatch('batch_recent', new Date(now - 86400000).toISOString());
-
-  await updateStorageSettings({ retentionDays: 30 });
-  assert.deepEqual((await listBatches()).map((batch) => batch.id).sort(), [
-    'batch_older_than_7',
-    'batch_recent',
-  ]);
-
-  await updateStorageSettings({ retentionDays: 7 });
-  assert.deepEqual((await listBatches()).map((batch) => batch.id), ['batch_recent']);
-
-  await updateStorageSettings({ retentionDays: 30 });
-  assert.deepEqual((await listBatches()).map((batch) => batch.id), ['batch_recent']);
-});
-
-test('retention cleanup runs during startup and after a successful upload', async () => {
-  await updateStorageSettings({ retentionDays: 30 });
-  const oldAt = new Date(Date.now() - (31 * 86400000)).toISOString();
-  await createBatch('batch_expired_at_startup', oldAt);
+test('obsolete saved settings are ignored and preserved while old batches survive startup and uploads', async () => {
+  const settingsPath = path.join(dataRoot, 'storage-settings.json');
+  const savedSettings = '{"retentionDays":30}\n';
+  await fs.writeFile(settingsPath, savedSettings);
+  const oldAt = '2000-01-01T00:00:00.000Z';
+  await createBatch('batch_old_at_startup', oldAt);
+  await selectBatch('batch_old_at_startup');
   await ensureStorageDirectories();
-  assert.equal((await listBatches()).some((batch) => batch.id === 'batch_expired_at_startup'), false);
+  assert.equal((await listBatches()).find((batch) => batch.id === 'batch_old_at_startup')?.current, true);
 
-  await createBatch('batch_expired_before_upload', oldAt);
+  await createBatch('batch_old_before_upload', oldAt);
   const uploadId = 'batch_new_upload';
   const uploadDir = path.join(batchesDir, uploadId);
   await fs.mkdir(uploadDir, { recursive: true });
@@ -72,13 +55,36 @@ test('retention cleanup runs during startup and after a successful upload', asyn
   });
 
   const remainingIds = (await listBatches()).map((batch) => batch.id);
-  assert.equal(remainingIds.includes('batch_expired_before_upload'), false);
-  assert.equal(remainingIds.includes(uploadId), true);
+  assert.deepEqual(remainingIds.sort(), [uploadId, 'batch_old_at_startup', 'batch_old_before_upload'].sort());
+  assert.equal(await fs.readFile(settingsPath, 'utf8'), savedSettings);
 });
 
-test('count retention leaves 10 saved batches unchanged', async () => {
+test('manual deletion preserves or reselects the current batch and clearing removes all batches', async () => {
+  await createBatch('batch_old', '2000-01-01T00:00:00.000Z');
+  await createBatch('batch_middle', '2010-01-01T00:00:00.000Z');
+  await createBatch('batch_newest', '2020-01-01T00:00:00.000Z');
+  await selectBatch('batch_middle');
+
+  await deleteBatch('batch_old');
+  assert.equal((await listBatches()).find((batch) => batch.current)?.id, 'batch_middle');
+  await assert.rejects(fs.stat(path.join(batchesDir, 'batch_old')), { code: 'ENOENT' });
+
+  await deleteBatch('batch_middle');
+  assert.equal((await listBatches()).find((batch) => batch.current)?.id, 'batch_newest');
+  await deleteBatch('batch_newest');
+  assert.deepEqual(await listBatches(), []);
+  assert.deepEqual(await listLatestFiles(), []);
+
+  await createBatch('batch_clear', '2000-01-01T00:00:00.000Z');
+  await selectBatch('batch_clear');
+  await clearAllBatches();
+  assert.deepEqual(await listBatches(), []);
+  assert.deepEqual(await listLatestFiles(), []);
+});
+
+test('count retention leaves 50 saved batches unchanged', async () => {
   const now = Date.now();
-  await Promise.all(Array.from({ length: 10 }, (_, index) => (
+  await Promise.all(Array.from({ length: 50 }, (_, index) => (
     createBatch(
       `batch_saved_${index + 1}`,
       new Date(now + (index * 1000)).toISOString(),
@@ -87,12 +93,30 @@ test('count retention leaves 10 saved batches unchanged', async () => {
 
   await ensureStorageDirectories();
 
-  assert.equal((await listBatches()).length, 10);
+  assert.equal((await listBatches()).length, 50);
 });
 
-test('saving an 11th batch removes the oldest and keeps the 10 newest', async () => {
-  const now = Date.now() - 20000;
-  await Promise.all(Array.from({ length: 10 }, (_, index) => (
+test('startup retains only the newest 50 batches and reselects a removed current batch', async () => {
+  const now = Date.now() - 60000;
+  await Promise.all(Array.from({ length: 53 }, (_, index) => (
+    createBatch(
+      `batch_startup_${index + 1}`,
+      new Date(now + (index * 1000)).toISOString(),
+    )
+  )));
+  await selectBatch('batch_startup_1');
+
+  await ensureStorageDirectories();
+
+  const batches = await listBatches();
+  assert.deepEqual(batches.map((batch) => batch.id),
+    Array.from({ length: 50 }, (_, index) => `batch_startup_${53 - index}`));
+  assert.equal(batches[0].current, true);
+});
+
+test('saving a 51st batch removes the oldest and keeps the 50 newest', async () => {
+  const now = Date.now() - 60000;
+  await Promise.all(Array.from({ length: 50 }, (_, index) => (
     createBatch(
       `batch_existing_${index + 1}`,
       new Date(now + (index * 1000)).toISOString(),
@@ -111,14 +135,15 @@ test('saving an 11th batch removes the oldest and keeps the 10 newest', async ()
   });
 
   const remainingIds = (await listBatches()).map((batch) => batch.id);
-  assert.equal(remainingIds.length, 10);
-  assert.equal(remainingIds.includes('batch_existing_1'), false);
-  assert.equal(remainingIds.includes(uploadId), true);
+  assert.deepEqual(remainingIds, [
+    uploadId,
+    ...Array.from({ length: 49 }, (_, index) => `batch_existing_${50 - index}`),
+  ]);
 });
 
 test('count retention preserves the newest upload as the current batch', async () => {
-  const now = Date.now() - 20000;
-  await Promise.all(Array.from({ length: 10 }, (_, index) => (
+  const now = Date.now() - 60000;
+  await Promise.all(Array.from({ length: 50 }, (_, index) => (
     createBatch(
       `batch_current_test_${index + 1}`,
       new Date(now + (index * 1000)).toISOString(),
@@ -138,7 +163,7 @@ test('count retention preserves the newest upload as the current batch', async (
   });
 
   const batches = await listBatches();
-  assert.equal(batches.length, 10);
+  assert.equal(batches.length, 50);
   assert.equal(batches[0].id, uploadId);
   assert.equal(batches[0].current, true);
   assert.deepEqual((await listLatestFiles()).map((file) => file.name), ['current-photo.jpg']);

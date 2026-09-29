@@ -91,7 +91,7 @@ The desktop app:
 - starts and manages the local server, or reuses a compatible server already on port `8787`;
 - reports server and LAN diagnostics;
 - displays the preferred phone URL and a QR code;
-- lists up to 10 recent upload batches;
+- lists up to 50 recent upload batches;
 - lets you make an older batch current, delete one batch, or clear all batches;
 - downloads every photo in the current batch to the standard Windows Downloads folder, preserving stored names and bytes and avoiding overwrites with numbered suffixes; and
 - supports Background Mode, which hides the window while keeping the server available from the system tray.
@@ -145,7 +145,7 @@ When mDNS starts successfully, the desktop QR code prefers this stable address s
 
 SnapOverLAN is designed for a trusted private network. It does not provide accounts, authentication, HTTPS, or protection suitable for an untrusted or public network. Anyone who can reach port `8787` on the LAN can load the phone interface and submit a supported photo batch.
 
-Non-loopback clients are intentionally limited to the phone interface and its static assets plus `POST /api/upload`. Saved batches, stored-file reads, storage settings, diagnostics, Auto-copy, and server-control operations return `404` to LAN clients and remain available only through loopback (`localhost`/`127.0.0.1`) for the desktop app and extension.
+Non-loopback clients are intentionally limited to the phone interface and its static assets plus `POST /api/upload`. Saved batches, stored-file reads, diagnostics, Auto-copy, and server-control operations return `404` to LAN clients and remain available only through loopback (`localhost`/`127.0.0.1`) for the desktop app and extension.
 
 Loopback management also rejects ordinary cross-site web Origins, opaque (`null`) Origins, and non-loopback Host names. The desktop renderer uses native IPC; installed Chrome/Brave extension Origins are allowed independently of their installation ID. Native clients without browser Origin headers and same-origin localhost requests remain supported. This boundary trusts local software and installed extensions with localhost access.
 
@@ -171,14 +171,14 @@ If the phone cannot connect:
 
 ## Storage and upload history
 
-Each successful non-empty upload creates a batch and makes it current. SnapOverLAN retains at most the 10 newest batches; adding an eleventh removes the oldest. An optional localhost-only `retentionDays` setting can remove older batches sooner. Retention cleanup runs at server startup, after uploads, and when that setting changes. The desktop UI does not currently expose the time-based setting.
+Each successful non-empty upload creates a batch and makes it current. SnapOverLAN retains at most the 50 newest batches; adding a 51st removes the oldest. Count-based cleanup runs at server startup and after uploads. Batches do not expire with age, and users can manually delete individual batches or clear all batches.
 
 Runtime storage is separate from application files:
 
 - Development and standalone server: `data/` in the repository
 - Packaged desktop app: `data/` inside Electron's user-data directory, shown in **Server diagnostics** (normally `%APPDATA%\SnapOverLAN\data` on Windows)
 
-The runtime data includes batch directories, the current-batch pointer, device identity, optional retention settings, and upload staging. It is excluded from packaged distributions.
+The runtime data includes batch directories, the current-batch pointer, device identity, and upload staging. It is excluded from packaged distributions.
 
 ## Development
 
@@ -259,7 +259,6 @@ Important localhost-only routes:
 
 - `GET /api/latest` and `GET /files/:name` — current batch metadata and files
 - `/api/batches` and `/api/batches/:id` — list, inspect, select, and delete batches; individual batch files are available through `/api/batches/:id/files/:name`
-- `GET`/`PUT /api/storage-settings` — optional time-based retention
 - `GET /api/server-status` — local state and diagnostics
 - `GET`/`PUT /api/auto-copy` — desktop Auto-copy integration
 

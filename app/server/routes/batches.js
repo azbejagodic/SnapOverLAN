@@ -4,12 +4,10 @@ import {
   clearAllBatches,
   deleteBatch,
   getBatchFilePathById,
-  getStorageSettings,
   listBatches,
   listBatchFiles,
   listLatestFiles,
   selectBatch,
-  updateStorageSettings,
 } from '../storage.js';
 
 const sendStorageError = (res, err) => {
@@ -41,12 +39,6 @@ const createBatchesRouter = () => {
   });
   router.delete('/batches', async (_req, res) => {
     try { await clearAllBatches(); res.json({ ok: true }); } catch (err) { sendStorageError(res, err); }
-  });
-  router.get('/storage-settings', async (_req, res) => {
-    try { res.json(await getStorageSettings()); } catch (err) { sendStorageError(res, err); }
-  });
-  router.put('/storage-settings', async (req, res) => {
-    try { res.json(await updateStorageSettings(req.body)); } catch (err) { sendStorageError(res, err); }
   });
   return router;
 };

@@ -125,7 +125,13 @@ test('LAN uploads accept only the approved image MIME allowlist', async () => {
   assert.match(tooMany.body.error, /Maximum 10 files are allowed/);
 });
 
-test('LAN clients receive 404 for batch, file, settings, diagnostics, and control APIs', async () => {
+test('removed storage settings API returns 404 for loopback GET and PUT', async () => {
+  for (const method of ['GET', 'PUT']) {
+    assert.equal((await request('/api/storage-settings', { method })).status, 404);
+  }
+});
+
+test('LAN clients receive 404 for batch, file, diagnostics, and control APIs', async () => {
   const upload = await uploadFiles([{ name: 'private.png', type: 'image/png' }]);
   assert.equal(upload.response.status, 200);
   const filename = upload.body.files[0].name;
@@ -142,13 +148,6 @@ test('LAN clients receive 404 for batch, file, settings, diagnostics, and contro
     request(`/api/batches/${encodeURIComponent(batchId)}`, { lan: true, method: 'DELETE' }),
     request('/api/batches', { lan: true, method: 'DELETE' }),
     request('/files/' + encodeURIComponent(filename), { lan: true }),
-    request('/api/storage-settings', { lan: true }),
-    request('/api/storage-settings', {
-      lan: true,
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ maxBatches: 1 }),
-    }),
     request('/api/server-status', { lan: true }),
     request('/api/auto-copy', { lan: true }),
     request('/api/server-control', { lan: true }),
@@ -173,7 +172,6 @@ test('loopback desktop APIs and existing photo downloads remain available', asyn
   assert.equal((await statusResponse.json()).status, 'listening');
 
   assert.equal((await request('/api/batches')).status, 200);
-  assert.equal((await request('/api/storage-settings')).status, 200);
   assert.equal((await request('/api/auto-copy')).status, 200);
 
   const autoCopyResponse = await request('/api/auto-copy', {

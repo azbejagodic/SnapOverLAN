@@ -17,7 +17,6 @@ const DATA_ROOT = process.env.SNAPOVERLAN_DATA_DIR || path.join(PROJECT_ROOT, 'd
 const DATA_DIR = path.join(DATA_ROOT, 'latest');
 const BATCHES_DIR = path.join(DATA_ROOT, 'batches');
 const CURRENT_BATCH_PATH = path.join(DATA_ROOT, 'current-batch.json');
-const STORAGE_SETTINGS_PATH = path.join(DATA_ROOT, 'storage-settings.json');
 const UPLOAD_TEMP_DIR = path.join(DATA_ROOT, 'upload-tmp');
 const PWA_DIR = path.join(PROJECT_ROOT, 'pwa');
 const STARTUP_LOG_PATH = process.env.SNAPOVERLAN_LOG_FILE || '';
@@ -38,6 +37,5 @@ export {
   PROJECT_ROOT,
   PWA_DIR,
   STARTUP_LOG_PATH,
-  STORAGE_SETTINGS_PATH,
   UPLOAD_TEMP_DIR,
 };

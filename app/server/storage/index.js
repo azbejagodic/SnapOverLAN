@@ -23,7 +23,6 @@ export {
   selectBatch,
   toUploadedFileRecords,
 } from './batches.js';
-export { getStorageSettings, updateStorageSettings } from './retention.js';
 export {
   finalizeUploadedBatch,
   isAllowedImageMimeType,

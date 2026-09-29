@@ -2,7 +2,7 @@
 // browser Origin, which can also belong to a hostile sandboxed web page.
 const createRendererServerClient = ({ serverOrigin, fetchImpl = fetch }) => async (resourcePath, method = 'GET') => {
   const allowed = (
-    method === 'GET' && ['/api/phone-url', '/api/server-status', '/api/batches'].includes(resourcePath)
+    method === 'GET' && ['/api/server-status', '/api/batches'].includes(resourcePath)
   ) || (
     method === 'POST' && /^\/api\/batches\/batch_[a-zA-Z0-9_-]+\/select$/.test(resourcePath)
   ) || (

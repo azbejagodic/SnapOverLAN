@@ -150,7 +150,6 @@ test('LAN clients receive 404 for batch, file, settings, diagnostics, and contro
       body: JSON.stringify({ maxBatches: 1 }),
     }),
     request('/api/server-status', { lan: true }),
-    request('/api/phone-url', { lan: true }),
     request('/api/upload-status', { lan: true }),
     request('/api/auto-copy', { lan: true }),
     request('/api/server-control', { lan: true }),
@@ -174,7 +173,6 @@ test('loopback desktop APIs and existing photo downloads remain available', asyn
   );
   assert.equal((await statusResponse.json()).status, 'listening');
 
-  assert.equal((await request('/api/phone-url')).status, 200);
   assert.equal((await request('/api/batches')).status, 200);
   assert.equal((await request('/api/storage-settings')).status, 200);
   assert.equal((await request('/api/auto-copy')).status, 200);

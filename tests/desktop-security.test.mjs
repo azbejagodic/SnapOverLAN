@@ -53,14 +53,14 @@ test('native renderer API bridge permits required actions and cannot proxy arbit
     requests.push({ url: String(url), options });
     return { ok: true, json: async () => ({ ok: true }) };
   } });
-  for (const [resource, method] of [['/api/phone-url', 'GET'], ['/api/server-status', 'GET'], ['/api/batches', 'GET'], ['/api/batches/batch_test/select', 'POST'], ['/api/batches/batch_test', 'DELETE'], ['/api/batches', 'DELETE']]) {
+  for (const [resource, method] of [['/api/server-status', 'GET'], ['/api/batches', 'GET'], ['/api/batches/batch_test/select', 'POST'], ['/api/batches/batch_test', 'DELETE'], ['/api/batches', 'DELETE']]) {
     assert.deepEqual(await client(resource, method), { ok: true });
   }
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 5);
   assert.ok(requests.every(({ url, options }) => url.startsWith('http://localhost:8787/api/') && options.redirect === 'error' && !options.headers));
   for (const resource of ['https://evil.example/', '//evil.example/', '/api/server-shutdown', '/api/batches/../server-control', '/api/batches/batch_test%2f..']) {
     await assert.rejects(client(resource), /rejected/);
   }
   await assert.rejects(client('/api/batches', 'PUT'), /rejected/);
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 5);
 });

@@ -1,8 +1,6 @@
 import crypto from 'crypto';
 import { Router } from 'express';
-import { PORT } from '../config.js';
 import { uploadLifecycle } from '../upload-lifecycle.js';
-import { isPrivateLanUrl } from '../../lan-address.js';
 import { SERVER_APPLICATION, SERVER_CONTROL_ID, SERVER_PROTOCOL_VERSION } from '../identity.js';
 
 const createSystemRouter = ({
@@ -72,18 +70,6 @@ const createSystemRouter = ({
     }
     try { res.json({ enabled: Boolean(await setAutoCopySetting(req.body.enabled)) }); }
     catch (err) { res.status(503).json({ error: err.message || 'Auto-copy control is unavailable.' }); }
-  });
-  router.get('/phone-url', (req, res) => {
-    const serverStatus = getServerStatus();
-    const serverPort = serverStatus?.port || PORT;
-    const urls = (Array.isArray(serverStatus?.lanUrls) ? serverStatus.lanUrls : [])
-      .filter((item) => isPrivateLanUrl(item.url));
-    res.json({
-      port: serverPort,
-      stableUrl: urls.length ? serverStatus?.stableUrl || '' : '',
-      primaryUrl: urls[0]?.url || '',
-      urls,
-    });
   });
   router.get('/server-status', (_req, res) => res.json(getServerStatus()));
   return router;

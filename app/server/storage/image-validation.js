@@ -30,4 +30,4 @@ const validateImage = (filePath) => {
   return result;
 };
 
-export { MAX_UPLOAD_PIXELS, validateImage };
+export { validateImage };

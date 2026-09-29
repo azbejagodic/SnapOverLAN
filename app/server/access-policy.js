@@ -56,4 +56,4 @@ const createLanAccessPolicy = ({ isLoopbackRequest }) => (req, res, next) => {
   next();
 };
 
-export { createLanAccessPolicy, isExtensionOrigin, isRemotePwaRequest, isRemoteUploadRequest };
+export { createLanAccessPolicy, isExtensionOrigin };

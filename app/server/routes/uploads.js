@@ -71,4 +71,4 @@ const createUploadsRouter = ({ onUploadCompleted = () => {} } = {}) => {
   return router;
 };
 
-export { createUploadCompletedEvent, createUploadsRouter };
+export { createUploadsRouter };

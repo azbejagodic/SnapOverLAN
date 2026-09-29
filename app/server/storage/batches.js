@@ -217,12 +217,10 @@ export {
   listBatchFiles,
   listLatestFiles,
   migrateLegacyLatestFiles,
-  readJsonFile,
   resolveBatchDir,
   selectBatch,
   selectNewestRemainingBatch,
   setCurrentBatchId,
   toUploadedFileRecords,
   writeBatchMetadata,
-  writeJsonFile,
 };

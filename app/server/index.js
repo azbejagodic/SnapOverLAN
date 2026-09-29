@@ -269,12 +269,7 @@ if (isDirectRun) {
 }
 
 export {
-  app,
-  HOST,
-  PORT,
-  handleAutoCopySettingResponse,
   isLoopbackRequest,
-  requestAutoCopySettingFromParent,
   sendUploadCompletedToParent,
   startServer,
   stopServer,

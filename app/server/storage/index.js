@@ -21,7 +21,6 @@ export {
   listBatchFiles,
   listLatestFiles,
   selectBatch,
-  toUploadedFileRecords,
 } from './batches.js';
 export {
   finalizeUploadedBatch,

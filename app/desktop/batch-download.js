@@ -80,4 +80,4 @@ const downloadBatchToFolder = async ({
   return { destinationDir, filenames, savedCount: filenames.length };
 };
 
-export { downloadBatchToFolder, writeFileWithoutOverwrite };
+export { downloadBatchToFolder };

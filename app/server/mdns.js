@@ -269,8 +269,5 @@ const createMdnsAdvertiser = ({
 };
 
 export {
-  createHostnameResponder,
   createMdnsAdvertiser,
-  getQuestionClassDetails,
-  removeBonjourHostAddressRecords,
 };

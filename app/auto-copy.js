@@ -280,9 +280,6 @@ const copyFirstUploadedImage = async ({
 };
 
 export {
-  CLIPBOARD_VERIFY_DELAYS_MS,
-  MAX_AUTO_COPY_FILE_BYTES,
-  MAX_AUTO_COPY_PIXELS,
   UPLOAD_COMPLETED_EVENT,
   copyFirstUploadedImage,
   decodeUploadedImage,

@@ -14,8 +14,6 @@
   "scripts": {
     "start": "electron app/main.js",
     "server": "node app/server/index.js",
-    "desktop": "electron app/main.js",
-    "app": "electron app/main.js",
     "dist": "npm run generate:icons && electron-builder --win --publish never",
     "package:extension": "node scripts/package-extension.mjs",
     "release:build": "npm run dist && npm run package:extension",

@@ -590,7 +590,7 @@ test('Electron downloads batch files directly to the standard Downloads director
   assert.ok(downloadHandlerSource);
   assert.match(
     downloadHandlerSource,
-    /ipcMain\.handle\('batch:download'[\s\S]*?desktopShell\.isMainWindowSender\(event\.sender\)/,
+    /ipcMain\.handle\('batch:download'[\s\S]*?assertMainWindowFrame\(event, 'Batch download request was rejected\.'\)/,
   );
   assert.match(downloadHandlerSource, /const destinationDir = electronApp\.getPath\('downloads'\)/);
   assert.doesNotMatch(downloadHandlerSource, /showOpenDialog|openDirectory|createDirectory|Choose folder/);

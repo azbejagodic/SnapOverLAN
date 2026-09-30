@@ -81,6 +81,7 @@ const createHarness = ({
       this.visible = false;
       this.destroyed = false;
       this.webContents = new EventEmitter();
+      this.webContents.mainFrame = {};
       this.webContents.setWindowOpenHandler = () => {};
       this.webContents.send = () => {};
       windows.push(this);
@@ -190,7 +191,10 @@ const createHarness = ({
     get initializationCalls() { return initializationCalls; },
     setCheck: (implementation) => { checkImplementation = implementation; },
     changeServerState,
-    invoke: (name, ...args) => handlers.get(name)({}, ...args),
+    invoke: (name, ...args) => {
+      const sender = desktop.getMainWindow().webContents;
+      return handlers.get(name)({ sender, senderFrame: sender.mainFrame }, ...args);
+    },
     rendererRefresh: () => {
       const sender = desktop.getMainWindow().webContents;
       return handlers.get('server:request')(

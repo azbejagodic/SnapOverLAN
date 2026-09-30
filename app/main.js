@@ -371,20 +371,34 @@ const handleServerControl = async (operation) => {
   }
 };
 
-ipcMain.handle('server:get-state', () => getServerStatePayload());
-ipcMain.handle('server:request', (event, resourcePath, method) => {
+const assertMainWindowFrame = (event, message = 'IPC request was rejected.') => {
   if (!desktopShell.isMainWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) {
-    throw new Error('Server request was rejected.');
+    throw new Error(message);
   }
+};
+
+ipcMain.handle('server:get-state', (event) => {
+  assertMainWindowFrame(event);
+  return getServerStatePayload();
+});
+ipcMain.handle('server:request', (event, resourcePath, method) => {
+  assertMainWindowFrame(event, 'Server request was rejected.');
   return rendererServerRequest(resourcePath, method);
 });
-ipcMain.handle('server:retry', () => handleServerControl(() => startServer()));
-ipcMain.handle('background:get', () => backgroundMode);
-ipcMain.handle('background:set', (_event, enabled) => setBackgroundMode(enabled));
+ipcMain.handle('server:retry', (event) => {
+  assertMainWindowFrame(event);
+  return handleServerControl(() => startServer());
+});
+ipcMain.handle('background:get', (event) => {
+  assertMainWindowFrame(event);
+  return backgroundMode;
+});
+ipcMain.handle('background:set', (event, enabled) => {
+  assertMainWindowFrame(event);
+  return setBackgroundMode(enabled);
+});
 ipcMain.handle('batch:download', async (event, batchId) => {
-  if (!desktopShell.isMainWindowSender(event.sender)) {
-    throw new Error('Batch download request was rejected.');
-  }
+  assertMainWindowFrame(event, 'Batch download request was rejected.');
   const destinationDir = electronApp.getPath('downloads');
   const result = await downloadBatchToFolder({
     batchId,

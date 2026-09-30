@@ -67,13 +67,35 @@ test('custom NSIS hooks safely migrate private-profile installs and retain firew
   const customInstall = source.match(/!macro customInstall\r?\n([\s\S]*?)!macroend/)?.[1];
   assert.ok(customInstall, 'customInstall macro must exist');
   assert.match(customInstall, /StrCpy \$launchLink "\$appExe"/);
-  assert.match(source, /firewall add rule name="\$\{SNAPOVERLAN_FIREWALL_RULE\}"[^\r\n]*protocol=TCP localport=8787 profile=private/);
+  assert.match(source, /firewall add rule name="\$\{SNAPOVERLAN_FIREWALL_RULE\}"[^\r\n]*protocol=TCP localport=8787 remoteip=localsubnet profile=private program="\$appExe"/);
   assert.match(source, /firewall add rule name="\$\{SNAPOVERLAN_MDNS_FIREWALL_RULE\}"[^\r\n]*protocol=UDP localport=5353 remoteip=localsubnet profile=private/);
 
   const deleteUploadRule = source.match(/firewall delete rule name="\$\{SNAPOVERLAN_FIREWALL_RULE\}"/g) || [];
   const deleteMdnsRule = source.match(/firewall delete rule name="\$\{SNAPOVERLAN_MDNS_FIREWALL_RULE\}"/g) || [];
   assert.equal(deleteUploadRule.length, 2, 'install and uninstall must both remove the TCP rule');
   assert.equal(deleteMdnsRule.length, 2, 'install and uninstall must both remove the mDNS rule');
+});
+
+test('firewall ADD failures warn without aborting or interrupting silent updates', async () => {
+  const source = await fs.readFile(path.join(projectRoot, 'build/installer.nsh'), 'utf8');
+  const install = source.match(/!macro customInstall\r?\n([\s\S]*?)!macroend/)[1];
+  for (const [rule, result] of [['SNAPOVERLAN_FIREWALL_RULE', 'SnapOverLANTcpFirewallResult'], ['SNAPOVERLAN_MDNS_FIREWALL_RULE', 'SnapOverLANMdnsFirewallResult']]) {
+    assert.match(install, new RegExp(`firewall add rule name="\\$\\{${rule}\\}"[^\\r\\n]*\\r?\\n\\s*Pop \\$${result}`));
+  }
+  assert.match(install, /\$\{If\} \$SnapOverLANTcpFirewallResult != "0"\s+\$\{OrIf\} \$SnapOverLANMdnsFirewallResult != "0"/);
+  assert.match(install, /DetailPrint "\$\{SNAPOVERLAN_FIREWALL_WARNING\}"/);
+  assert.match(install, /MessageBox MB_OK\|MB_ICONEXCLAMATION "\$\{SNAPOVERLAN_FIREWALL_WARNING\}" \/SD IDOK/);
+  assert.match(source, /SnapOverLAN installed, but Windows Firewall could not be configured completely\.[^\r\n]*manually allowing SnapOverLAN/);
+  assert.doesNotMatch(install, /\bAbort\b|\bQuit\b/);
+  const uninstall = source.match(/!macro customUnInstall\r?\n([\s\S]*?)!macroend/)[1];
+  for (const block of [install, uninstall]) {
+    assert.equal((block.match(/firewall delete rule[^\r\n]*\r?\n\s*Pop \$0/g) || []).length, 2);
+  }
+  const builder = await fs.readFile(path.join(projectRoot, 'node_modules/app-builder-lib/templates/nsis/installSection.nsh'), 'utf8');
+  assert.ok(builder.indexOf('StrCpy $appExe "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"') < builder.indexOf('!insertmacro customInstall'));
+  const manager = await fs.readFile(path.join(projectRoot, 'app/desktop/server-manager.js'), 'utf8');
+  assert.match(manager, /ELECTRON_RUN_AS_NODE/);
+  assert.match(manager, /process\.execPath/);
 });
 
 test('NSIS owns update progress only for the --updated installer path', async () => {

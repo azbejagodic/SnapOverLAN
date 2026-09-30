@@ -125,6 +125,66 @@ test('LAN uploads accept only the approved image MIME allowlist', async () => {
   assert.match(tooMany.body.error, /Maximum 10 files are allowed/);
 });
 
+const browserUpload = async (headers) => {
+  const boundary = 'snapoverlan-origin-regression';
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photos"; filename="origin.png"\r\nContent-Type: image/png\r\n\r\n`),
+    await imageFixture('image/png'),
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${origin}/api/upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': body.length, ...headers },
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+};
+
+test('same-origin localhost and IP uploads preserve trusted extension and native access', async () => {
+  for (const hostname of ['localhost', '127.0.0.1']) {
+    const host = `${hostname}:${server.address().port}`;
+    for (const headers of [
+      { Origin: `http://${host}`, 'Sec-Fetch-Site': 'same-origin' },
+      { Referer: `http://${host}/`, 'Sec-Fetch-Site': 'same-origin' },
+      { Origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' },
+      {},
+    ]) {
+      assert.equal(await browserUpload({ Host: host, ...headers }), 200);
+    }
+  }
+});
+
+test('hostile and opaque Origins cannot upload through localhost or loopback IP', async () => {
+  const before = await request('/api/batches').then((r) => r.json());
+  for (const hostname of ['localhost', '127.0.0.1']) {
+    for (const hostile of ['https://evil.example', 'null']) {
+      assert.equal(await browserUpload({ Host: `${hostname}:${server.address().port}`, Origin: hostile }), 403);
+    }
+  }
+  assert.deepEqual(await request('/api/batches').then((r) => r.json()), before);
+  assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
+});
+
+test('cross-site no-Origin browser uploads cannot inherit native loopback access', async () => {
+  const before = await request('/api/batches').then((r) => r.json());
+  for (const hostname of ['localhost', '127.0.0.1']) {
+    for (const headers of [
+      { 'Sec-Fetch-Site': 'cross-site' },
+      { 'Sec-Fetch-Site': 'same-site' },
+      { Referer: 'https://evil.example/' },
+    ]) {
+      assert.equal(await browserUpload({ Host: `${hostname}:${server.address().port}`, ...headers }), 403);
+    }
+  }
+  assert.deepEqual(await request('/api/batches').then((r) => r.json()), before);
+  assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
+});
+
 test('removed storage settings API returns 404 for loopback GET and PUT', async () => {
   for (const method of ['GET', 'PUT']) {
     assert.equal((await request('/api/storage-settings', { method })).status, 404);

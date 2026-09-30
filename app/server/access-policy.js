@@ -47,7 +47,7 @@ const isTrustedLocalBrowserRequest = (req) => {
 };
 
 const createLanAccessPolicy = ({ isLoopbackRequest }) => (req, res, next) => {
-  if (isRemotePwaRequest(req) || isRemoteUploadRequest(req)) {
+  if (isRemotePwaRequest(req) || (isRemoteUploadRequest(req) && !isLoopbackRequest(req))) {
     next();
     return;
   }

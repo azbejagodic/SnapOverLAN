@@ -69,7 +69,11 @@ const finalizeUploadedBatch = async (req) => {
   assertUploadConnected(req);
   await setCurrentBatchId(req.uploadBatchId);
   req.uploadCommitted = true;
-  await applyBatchRetention();
+  try {
+    await applyBatchRetention();
+  } catch (error) {
+    console.warn(`Could not apply retention after committing upload ${req.uploadBatchId}:`, error);
+  }
   return toUploadedFileRecords(req.files);
 };
 

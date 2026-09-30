@@ -15,7 +15,7 @@ const applyBatchRetention = () => {
     const removedBatchIds = batches.slice(MAX_RETAINED_BATCHES).map((batch) => batch.id);
     if (removedBatchIds.length === 0) return [];
     await Promise.all(removedBatchIds.map((id) => (
-      fs.rm(resolveBatchDir(id), { recursive: true, force: true })
+      fs.rm(resolveBatchDir(id), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
     )));
     if (removedBatchIds.includes(await getCurrentBatchId())) await selectNewestRemainingBatch();
     return removedBatchIds;

@@ -598,7 +598,7 @@ test('Electron downloads batch files directly to the standard Downloads director
     downloadHandlerSource,
     /const result = await downloadBatchToFolder\([\s\S]*?await shell\.openPath\(destinationDir\)[\s\S]*?return result/,
   );
-  assert.match(desktopBatchDownloadSource, /Buffer\.from\(await fileResponse\.arrayBuffer\(\)\)/);
+  assert.match(desktopBatchDownloadSource, /Buffer\.from\(await fetchOrThrow\(fetchImpl, fileUrl, \(response\) => response\.arrayBuffer\(\)\)\)/);
   assert.match(desktopBatchDownloadSource, /writeFile[\s\S]*?flag:\s*'wx'/);
   assert.match(desktopBatchDownloadSource, /`\$\{stem\} \(\$\{suffix\}\)\$\{extension\}`/);
   assert.match(batchesRouteSource, /router\.get\('\/batches\/:id\/files\/:name'/);

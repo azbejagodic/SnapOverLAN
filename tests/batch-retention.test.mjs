@@ -95,13 +95,13 @@ for (const stage of ['rename', 'metadata', 'current-batch']) {
   test(`pre-commit ${stage} failure still fails the upload`, async (t) => {
     await createBatch('batch_previous', '2000-01-01T00:00:00.000Z');
     await selectBatch('batch_previous');
-    const method = stage === 'rename' ? 'rename' : 'writeFile';
+    const method = 'rename';
     const original = fs[method];
     t.mock.method(fs, method, async (...args) => {
       const target = String(args[0]);
       if ((stage === 'rename' && path.dirname(target) === path.join(dataRoot, 'upload-tmp'))
-        || (stage === 'metadata' && path.basename(target) === '.batch.json')
-        || (stage === 'current-batch' && target === path.join(dataRoot, 'current-batch.json'))) {
+        || (stage === 'metadata' && path.basename(String(args[1])) === '.batch.json')
+        || (stage === 'current-batch' && args[1] === path.join(dataRoot, 'current-batch.json'))) {
         throw new Error(`Injected ${stage} failure`);
       }
       return original(...args);

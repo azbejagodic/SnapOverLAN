@@ -1,5 +1,6 @@
 import path from 'path';
 import { promises as fs } from 'fs';
+import { randomUUID } from 'node:crypto';
 import {
   BATCHES_DIR,
   CURRENT_BATCH_PATH,
@@ -37,7 +38,18 @@ const readJsonFile = async (filePath, fallback) => {
 
 const writeJsonFile = async (filePath, value) => {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const contents = `${JSON.stringify(value, null, 2)}\n`;
+  const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  const temporaryFile = await fs.open(temporaryPath, 'wx');
+  try {
+    await temporaryFile.writeFile(contents, 'utf8');
+    await temporaryFile.close();
+    await fs.rename(temporaryPath, filePath);
+  } catch (error) {
+    await temporaryFile.close().catch(() => {});
+    await fs.rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
 };
 
 const toFileRecord = ({ name, size }) => ({

@@ -1,6 +1,7 @@
 import path from 'path';
+import { promises as fs } from 'node:fs';
 import { Router } from 'express';
-import { MAX_FILES } from '../config.js';
+import { MAX_FILES, MIN_UPLOAD_FREE_BYTES, UPLOAD_TEMP_DIR, UPLOAD_DISK_SPACE_ERROR } from '../config.js';
 import { uploadLifecycle } from '../upload-lifecycle.js';
 import {
   finalizeUploadedBatch,
@@ -39,6 +40,12 @@ const createUploadsRouter = ({ onUploadCompleted = () => {} } = {}) => {
   router.post('/upload', markUploadStarted, (req, res, next) => {
     req.uploadProcessing = (async () => {
       try {
+        const space = await fs.statfs(UPLOAD_TEMP_DIR, { bigint: true });
+        if (req.uploadInterrupted || req.aborted) return;
+        if (space.bavail * space.bsize < BigInt(MIN_UPLOAD_FREE_BYTES)) {
+          res.status(507).json({ error: UPLOAD_DISK_SPACE_ERROR });
+          return;
+        }
         await new Promise((resolve, reject) => receiveFiles(req, res, (error) => error ? reject(error) : resolve()));
         await validateUploadedFiles(req);
         const files = await finalizeUploadedBatch(req);

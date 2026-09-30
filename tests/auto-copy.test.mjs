@@ -217,11 +217,11 @@ test('video uploads are rejected and empty batches do not emit image-copy reques
   const events = [];
   completionHandler = (event) => events.push(event);
 
-  const videoUploads = await Promise.all([
-    uploadFiles([{ name: 'clip.mp4', type: 'video/mp4' }]),
-    uploadFiles([{ name: 'clip.mov', type: 'video/quicktime' }]),
-    uploadFiles([{ name: 'clip.webm', type: 'video/webm' }]),
-  ]);
+  const videoUploads = [
+    await uploadFiles([{ name: 'clip.mp4', type: 'video/mp4' }]),
+    await uploadFiles([{ name: 'clip.mov', type: 'video/quicktime' }]),
+    await uploadFiles([{ name: 'clip.webm', type: 'video/webm' }]),
+  ];
   const emptyUpload = await uploadFiles([]);
 
   assert.deepEqual(videoUploads.map(({ response }) => response.status), [400, 400, 400]);

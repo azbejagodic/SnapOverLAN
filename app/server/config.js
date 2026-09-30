@@ -12,6 +12,10 @@ const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configure
 const HOST = '0.0.0.0';
 const MAX_FILES = 10;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_ACTIVE_UPLOADS = 1;
+const MIN_UPLOAD_FREE_BYTES = 1024 ** 3 + MAX_FILES * MAX_FILE_SIZE;
+const UPLOAD_BUSY_ERROR = 'Another upload is in progress. Try again shortly.';
+const UPLOAD_DISK_SPACE_ERROR = 'The PC needs more free disk space.';
 
 const DATA_ROOT = process.env.SNAPOVERLAN_DATA_DIR || path.join(PROJECT_ROOT, 'data');
 const DATA_DIR = path.join(DATA_ROOT, 'latest');
@@ -33,6 +37,10 @@ export {
   LAUNCH_SOURCE,
   MAX_FILES,
   MAX_FILE_SIZE,
+  MAX_ACTIVE_UPLOADS,
+  MIN_UPLOAD_FREE_BYTES,
+  UPLOAD_BUSY_ERROR,
+  UPLOAD_DISK_SPACE_ERROR,
   PORT,
   PWA_DIR,
   STARTUP_LOG_PATH,

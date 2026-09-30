@@ -1,3 +1,5 @@
+import { MAX_ACTIVE_UPLOADS, UPLOAD_BUSY_ERROR } from './config.js';
+
 const UPLOAD_DRAIN_TIMEOUT_MS = 60 * 1000;
 
 const createUploadLifecycle = ({ timeoutMs = UPLOAD_DRAIN_TIMEOUT_MS, logger = console } = {}) => {
@@ -31,6 +33,10 @@ const createUploadLifecycle = ({ timeoutMs = UPLOAD_DRAIN_TIMEOUT_MS, logger = c
     // Admission and counting are synchronous: shutdown cannot interleave between them.
     if (status.draining) {
       res.status(503).json({ error: 'Server is shutting down. Please try again.' });
+      return;
+    }
+    if (status.activeUploads >= MAX_ACTIVE_UPLOADS) {
+      res.status(429).json({ error: UPLOAD_BUSY_ERROR });
       return;
     }
     status.activeUploads += 1;

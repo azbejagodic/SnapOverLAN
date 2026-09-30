@@ -73,5 +73,5 @@ try {
   }
   parentPort.postMessage(verified);
 } catch (error) {
-  parentPort.postMessage({ error: `Invalid image: ${error.message}` });
+  parentPort.postMessage({ error: `Invalid image: ${error.message}`, code: error.code });
 }

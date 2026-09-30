@@ -95,12 +95,16 @@ test('server-only shutdown with no uploads exits without advancing time', async 
   assert.deepEqual(events, ['log', 'close', 'exit:0']);
 });
 
-test('concurrent uploads finish exactly once and draining waits for both', async () => {
+test('busy rejection preserves status and draining waits for the admitted upload exactly once', async () => {
   const lifecycle = createUploadLifecycle();
   const a = beginUpload(lifecycle);
   assert.equal(lifecycle.status.activeUploads, 1);
-  const b = beginUpload(lifecycle);
-  assert.equal(lifecycle.status.activeUploads, 2);
+  const before = JSON.stringify(lifecycle.status);
+  lifecycle.markUploadStarted({}, {
+    status(code) { assert.equal(code, 429); return this; },
+    json(body) { assert.deepEqual(body, { error: 'Another upload is in progress. Try again shortly.' }); },
+  }, () => assert.fail('busy upload admitted'));
+  assert.equal(JSON.stringify(lifecycle.status), before);
   assert.equal(lifecycle.status.uploadInProgress, true);
   assert.equal(typeof lifecycle.status.lastUploadStartedAt, 'number');
   assert.equal(lifecycle.status.lastUploadFinishedAt, null);
@@ -108,19 +112,14 @@ test('concurrent uploads finish exactly once and draining waits for both', async
   assert.equal(lifecycle.beginDrain(), drain, 'duplicate shutdown shares one deadline');
   let done = false;
   drain.then(() => { done = true; });
-  a.emit('finish');
-  a.emit('close');
   await flush();
   assert.equal(done, false);
-  assert.equal(lifecycle.status.activeUploads, 1);
-  assert.equal(lifecycle.status.uploadInProgress, true);
-  assert.equal(lifecycle.status.uploadVersion, 1);
-  b.emit('close');
-  b.emit('finish');
+  a.emit('finish');
+  a.emit('close');
   assert.equal(await drain, 'idle');
   assert.equal(lifecycle.status.activeUploads, 0);
   assert.equal(lifecycle.status.uploadInProgress, false);
-  assert.equal(lifecycle.status.uploadVersion, 2);
+  assert.equal(lifecycle.status.uploadVersion, 1);
   assert.equal(typeof lifecycle.status.lastUploadFinishedAt, 'number');
 });
 
@@ -192,8 +191,8 @@ test('idle-only shutdown atomically rejects active uploads without state changes
   assert.equal(lifecycle.beginDrain({ onlyIfIdle: true }), null);
   assert.equal(JSON.stringify(lifecycle.status), before);
   assert.equal(lifecycle.getDrainState().phase, 'idle');
-  const b = beginUpload(lifecycle);
   a.emit('finish');
+  const b = beginUpload(lifecycle);
   assert.equal(lifecycle.beginDrain({ onlyIfIdle: true }), null);
   t.mock.timers.tick(120000);
   b.emit('finish');
@@ -231,7 +230,7 @@ const heldUpload = async (t, port) => {
 };
 
 for (const transport of ['ipc', 'localhost']) {
-  test(`${transport} shutdown atomically closes admission and lets both real phone uploads finish`, { timeout: 15000 }, async (t) => {
+  test(`${transport} shutdown closes admission and lets the single admitted phone upload finish`, { timeout: 15000 }, async (t) => {
     const probe = createServer();
     probe.listen(0, '127.0.0.1');
     await once(probe, 'listening');
@@ -279,8 +278,10 @@ for (const transport of ['ipc', 'localhost']) {
       });
     });
     const a = await heldUpload(t, port);
+    await until(async () => (await status()).activeUploads === 1);
     const b = await heldUpload(t, port);
-    await until(async () => (await status()).activeUploads === 2);
+    assert.deepEqual(await b.response, { status: 429, body: { error: 'Another upload is in progress. Try again shortly.' } });
+    assert.equal((await status()).activeUploads, 1);
     const denied = await fetch(`${url}/server-shutdown`, { method: 'POST', headers: { 'x-snapoverlan-shutdown-token': 'wrong' } });
     assert.equal(denied.status, 404);
     assert.equal((await status()).draining, false);
@@ -325,16 +326,12 @@ for (const transport of ['ipc', 'localhost']) {
     form.append('photos', new Blob([await imageFixture('image/png')], { type: 'image/png' }), 'rejected.png');
     const rejected = await fetch(`${url}/upload`, { method: 'POST', body: form });
     assert.equal(rejected.status, 503);
-    assert.equal((await status()).activeUploads, 2);
+    assert.equal((await status()).activeUploads, 1);
     assert.deepEqual(await readdir(path.join(root, 'upload-tmp')), staged);
     a.finish();
     assert.equal((await a.response).status, 200);
-    assert.equal((await status()).activeUploads, 1);
-    assert.equal(child.exitCode, null);
-    b.finish();
-    assert.equal((await b.response).status, 200);
     const [code] = await exited;
     assert.equal(code, 0, errors);
-    assert.equal((await readdir(path.join(root, 'batches'))).length, 2);
+    assert.equal((await readdir(path.join(root, 'batches'))).length, 1);
   });
 }

@@ -137,6 +137,12 @@ for (const phase of ['destination creation', 'image validation']) {
     req.destroy();
     await until(() => serverReq.uploadInterrupted === true);
     assert.equal(uploadLifecycle.status.activeUploads, 1, 'cleanup must settle before reporting idle');
+    const stagedBefore = await readdir(path.join(root, 'upload-tmp'));
+    const busy = await send(await imageFixture('image/png'));
+    assert.equal(busy.status, 429);
+    assert.deepEqual(await busy.json(), { error: 'Another upload is in progress. Try again shortly.' });
+    assert.deepEqual(await readdir(path.join(root, 'upload-tmp')), stagedBefore);
+    assert.equal(uploadLifecycle.status.activeUploads, 1);
     if (phase === 'image validation') {
       assert.equal(serverReq.complete, true, 'a complete HTTP body can disconnect before validation finishes');
       assert.equal(serverReq.aborted, false);
@@ -147,5 +153,9 @@ for (const phase of ['destination creation', 'image validation']) {
     assert.deepEqual(await readdir(path.join(root, 'upload-tmp')), []);
     assert.deepEqual(await listBatches(), before);
     assert.equal(events.length, eventsBefore);
+    const retry = await send(await imageFixture('image/png'));
+    assert.equal(retry.status, 200);
+    await retry.json();
+    await until(() => uploadLifecycle.status.activeUploads === 0);
   });
 }

@@ -21,7 +21,8 @@ const validateImage = (filePath) => {
       if (error) reject(error); else resolve(result);
     };
     const timer = setTimeout(() => finish(new Error('Image validation timed out.')), 30000);
-    worker.once('message', (message) => finish(message.error ? new Error(message.error) : null, message));
+    worker.once('message', (message) => finish(message.error
+      ? Object.assign(new Error(message.error), { code: message.code }) : null, message));
     worker.once('error', (error) => finish(error));
     worker.once('exit', () => finish(new Error('Image validation did not complete.')));
   });

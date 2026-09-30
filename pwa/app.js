@@ -311,6 +311,8 @@ async function getUploadErrorMessage(response) {
     // An empty or non-JSON response still gets a safe status-based message.
   }
 
+  if (response.status === 429) return 'Another upload is in progress. Try again shortly.';
+  if (response.status === 507) return 'The PC needs more free disk space.';
   if (response.status === 503) return 'SnapOverLAN is shutting down. Try again after reopening it.';
   if (response.status >= 500 && response.status < 600) return 'SnapOverLAN could not complete the upload. Try again.';
   if (response.status >= 400 && response.status < 500) {

@@ -45,6 +45,7 @@ let serverError = '';
 let backgroundMode = false;
 let autoCopyFirstPhoto = false;
 let quitOperation = null;
+const activeBatchExports = new Set();
 let allowQuit = false;
 let serverManager = null;
 let autoCopyController = null;
@@ -322,6 +323,7 @@ async function requestQuit({ installUpdate = false, warningParent } = {}) {
     return quitOperation;
   }
   const operation = (async () => {
+    await Promise.allSettled(activeBatchExports);
     if (installUpdate) {
       console.log('SnapOverLAN updater: Update install requested; cleanup starting.');
     }
@@ -399,15 +401,22 @@ ipcMain.handle('background:set', (event, enabled) => {
 });
 ipcMain.handle('batch:download', async (event, batchId) => {
   assertMainWindowFrame(event, 'Batch download request was rejected.');
+  if (quitOperation || allowQuit) throw new Error('SnapOverLAN is quitting. Please try again after reopening it.');
   const destinationDir = electronApp.getPath('downloads');
-  const result = await downloadBatchToFolder({
+  const operation = downloadBatchToFolder({
     batchId,
     destinationDir,
     serverOrigin: SERVER_ORIGIN,
   });
-  const openError = await shell.openPath(destinationDir);
-  if (openError) console.warn('Could not open the Downloads folder:', openError);
-  return result;
+  activeBatchExports.add(operation);
+  try {
+    const result = await operation;
+    const openError = await shell.openPath(destinationDir);
+    if (openError) console.warn('Could not open the Downloads folder:', openError);
+    return result;
+  } finally {
+    activeBatchExports.delete(operation);
+  }
 });
 
 const gotLock = electronApp.requestSingleInstanceLock();

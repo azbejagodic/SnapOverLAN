@@ -84,6 +84,7 @@ const createQuitHarness = ({ stopServer, pendingOperation = null } = {}) => {
   const events = [];
   const context = {
     quitOperation: null,
+    activeBatchExports: new Set(),
     allowQuit: false,
     console: { log() {}, error() {} },
     serverManager: { getOperation: () => pendingOperation, isRunning: () => true },
@@ -596,10 +597,11 @@ test('Electron downloads batch files directly to the standard Downloads director
   assert.doesNotMatch(downloadHandlerSource, /showOpenDialog|openDirectory|createDirectory|Choose folder/);
   assert.match(
     downloadHandlerSource,
-    /const result = await downloadBatchToFolder\([\s\S]*?await shell\.openPath\(destinationDir\)[\s\S]*?return result/,
+    /const operation = downloadBatchToFolder\([\s\S]*?const result = await operation;[\s\S]*?await shell\.openPath\(destinationDir\)[\s\S]*?return result/,
   );
   assert.match(desktopBatchDownloadSource, /Buffer\.from\(await fetchOrThrow\(fetchImpl, fileUrl, \(response\) => response\.arrayBuffer\(\)\)\)/);
-  assert.match(desktopBatchDownloadSource, /writeFile[\s\S]*?flag:\s*'wx'/);
+  assert.match(desktopBatchDownloadSource, /fsApi\.open\(temporaryPath, 'wx'\)/);
+  assert.match(desktopBatchDownloadSource, /fsApi\.link\(temporaryPath, destinationPath\)/);
   assert.match(desktopBatchDownloadSource, /`\$\{stem\} \(\$\{suffix\}\)\$\{extension\}`/);
   assert.match(batchesRouteSource, /router\.get\('\/batches\/:id\/files\/:name'/);
 });

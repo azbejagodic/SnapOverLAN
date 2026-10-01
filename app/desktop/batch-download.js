@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 
 const BATCH_ID_PATTERN = /^batch_[a-zA-Z0-9_-]+$/;
 const DOWNLOAD_REQUEST_TIMEOUT_MS = 30_000;
@@ -38,15 +39,26 @@ const fetchOrThrow = async (fetchImpl, url, readBody) => {
 const writeFileWithoutOverwrite = async ({ bytes, destinationDir, filename, fsApi = fs }) => {
   const extension = path.extname(filename);
   const stem = path.basename(filename, extension);
-  for (let suffix = 0; ; suffix += 1) {
-    const candidate = suffix === 0 ? filename : `${stem} (${suffix})${extension}`;
-    const destinationPath = path.join(destinationDir, candidate);
-    try {
-      await fsApi.writeFile(destinationPath, bytes, { flag: 'wx' });
-      return candidate;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
+  const temporaryPath = path.join(destinationDir, `.snapoverlan-${randomUUID()}.tmp`);
+  const temporaryFile = await fsApi.open(temporaryPath, 'wx');
+  try {
+    await temporaryFile.writeFile(bytes);
+    await temporaryFile.close();
+    for (let suffix = 0; ; suffix += 1) {
+      const candidate = suffix === 0 ? filename : `${stem} (${suffix})${extension}`;
+      const destinationPath = path.join(destinationDir, candidate);
+      try {
+        // rename() can overwrite a racing destination. A hard link publishes
+        // the complete file atomically and fails if the name is already taken.
+        await fsApi.link(temporaryPath, destinationPath);
+        return candidate;
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
     }
+  } finally {
+    await temporaryFile.close().catch(() => {});
+    await fsApi.rm(temporaryPath, { force: true }).catch(() => {});
   }
 };
 

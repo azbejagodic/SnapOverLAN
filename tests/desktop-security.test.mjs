@@ -16,6 +16,7 @@ const createIpcHarness = () => {
   const response = { files: [] };
   const download = { savedCount: 1 };
   const context = {
+    activeBatchExports: new Set(), quitOperation: null, allowQuit: false,
     ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
     desktopShell: { isMainWindowSender: (candidate) => candidate === sender },
     getServerStatePayload: () => { calls.push(['state']); return state; },
@@ -49,6 +50,47 @@ const channels = [
   ['batch:download', ['batch_test'], (harness) => harness.download,
     [['path', 'downloads'], ['download', 'batch_test', 'downloads', 'http://localhost:8787'], ['open', 'downloads']]],
 ];
+
+for (const installUpdate of [false, true]) {
+  for (const fails of [false, true]) {
+    test(`${installUpdate ? 'update' : 'quit'} waits for ${fails ? 'failed' : 'successful'} export cleanup and closes admission`, async () => {
+      const harness = createIpcHarness();
+      const { context, sender, calls, handlers } = harness;
+      let finish;
+      const pending = new Promise((resolve, reject) => {
+        finish = () => {
+          calls.push(['cleanup']);
+          if (fails) reject(new Error('export failed')); else resolve(harness.download);
+        };
+      });
+      Object.assign(context, {
+        downloadBatchToFolder: () => pending,
+        serverManager: { getOperation: () => null, isRunning: () => true },
+        stopServer: async () => { calls.push(['stop']); },
+        updateManager: { installDownloadedUpdate: () => { calls.push(['install']); return true; } },
+        console: { log() {}, error() {} },
+      });
+      context.desktopShell.destroyTray = () => {};
+      context.electronApp.quit = () => calls.push(['quit']);
+      const quitSource = mainSource.slice(mainSource.indexOf('async function requestQuit('), mainSource.indexOf('const handleServerControl ='));
+      const quit = runInNewContext(`${quitSource}\nrequestQuit`, context);
+      const event = { sender, senderFrame: sender.mainFrame };
+      const exported = handlers.get('batch:download')(event, 'batch_test');
+      const exportResult = fails ? assert.rejects(exported, /export failed/) : exported;
+      assert.equal(context.activeBatchExports.size, 1);
+      const quitting = quit({ installUpdate });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(calls, [['path', 'downloads']]);
+      await assert.rejects(handlers.get('batch:download')(event, 'batch_other'), /is quitting/);
+      finish();
+      await exportResult;
+      assert.equal(await quitting, true);
+      assert.equal(context.activeBatchExports.size, 0);
+      assert.ok(calls.findIndex(([name]) => name === 'stop') > calls.findIndex(([name]) => name === 'cleanup'));
+      assert.deepEqual(calls.at(-1), [installUpdate ? 'install' : 'quit']);
+    });
+  }
+}
 
 test('sender validation tests cover every renderer IPC handler', () => {
   const registered = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((match) => match[1]);

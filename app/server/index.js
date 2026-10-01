@@ -32,6 +32,14 @@ let deviceId = '';
 let hostname = '';
 let mdnsAdvertiser = null;
 let mdnsStatus = null;
+const MDNS_REFRESH_INTERVAL_MS = 15_000;
+let mdnsMonitorTimer = null;
+let mdnsMonitorEnabled = false;
+let mdnsRefreshPromise = null;
+
+const isMdnsAddressCurrent = (lanUrls) => mdnsStatus?.started
+  && mdnsStatus.ipv4Addresses?.length > 0
+  && mdnsStatus.ipv4Addresses.every((address) => lanUrls.some((record) => record.address === address));
 
 const getServerStatus = () => {
   const address = serverInstance?.address?.();
@@ -48,7 +56,8 @@ const getServerStatus = () => {
     port: boundPort || PORT,
     deviceId,
     hostname,
-    stableUrl: mdnsStatus?.started ? mdnsStatus.stableUrl : '',
+    stableUrl: serverInstance?.listening && mdnsMonitorEnabled && isMdnsAddressCurrent(lanUrls)
+      ? mdnsStatus.stableUrl : '',
     lanUrls,
     primaryLanUrl: lanUrls[0]?.url || '',
     launchSource: LAUNCH_SOURCE,
@@ -71,14 +80,26 @@ const stopMdnsAdvertisement = async () => {
 
 const startMdnsAdvertisement = async ({ mdnsFactory, port }) => {
   await stopMdnsAdvertisement();
-  if (!deviceId) return;
+  const addresses = getPhoneUrlRecords({ port });
+  if (!mdnsMonitorEnabled || !deviceId || addresses.length === 0) return;
   try {
-    mdnsAdvertiser = mdnsFactory({ deviceId, port });
+    mdnsAdvertiser = mdnsFactory({ deviceId, port, getLanAddresses: () => addresses });
     mdnsStatus = await mdnsAdvertiser.start();
   } catch (error) {
     console.warn('Could not start SnapOverLAN mDNS advertisement; using IP fallback:', error);
     await stopMdnsAdvertisement();
   }
+};
+
+const refreshMdnsAdvertisement = (options) => {
+  if (!mdnsMonitorEnabled) return Promise.resolve();
+  if (mdnsRefreshPromise) return mdnsRefreshPromise;
+  mdnsRefreshPromise = (async () => {
+    if (!isMdnsAddressCurrent(getPhoneUrlRecords({ port: options.port }))) {
+      await startMdnsAdvertisement(options);
+    }
+  })().finally(() => { mdnsRefreshPromise = null; });
+  return mdnsRefreshPromise;
 };
 
 const loadPersistentIdentity = async () => {
@@ -145,7 +166,17 @@ const startServer = async ({
       const listeningPort = listeningAddress && typeof listeningAddress === 'object'
         ? listeningAddress.port
         : port;
-      await startMdnsAdvertisement({ mdnsFactory, port: listeningPort });
+      mdnsMonitorEnabled = true;
+      const mdnsOptions = { mdnsFactory, port: listeningPort };
+      await refreshMdnsAdvertisement(mdnsOptions);
+      if (mdnsMonitorEnabled) {
+        mdnsMonitorTimer = setInterval(() => {
+          refreshMdnsAdvertisement(mdnsOptions).catch((error) => {
+            console.warn('Could not refresh SnapOverLAN mDNS advertisement:', error);
+          });
+        }, MDNS_REFRESH_INTERVAL_MS);
+        mdnsMonitorTimer.unref();
+      }
       serverReady = true;
       const status = getServerStatus();
       if (log) {
@@ -172,6 +203,10 @@ const stopServer = async () => {
   const server = serverInstance;
   serverInstance = null;
   serverReady = false;
+  mdnsMonitorEnabled = false;
+  clearInterval(mdnsMonitorTimer);
+  mdnsMonitorTimer = null;
+  await mdnsRefreshPromise;
   await stopMdnsAdvertisement();
   if (!server) return;
   await new Promise((resolve, reject) => {

@@ -67,7 +67,7 @@ for (const installUpdate of [false, true]) {
       const parent = { isDestroyed: () => false };
       let dismiss;
       const context = {
-        console, quitOperation: null, allowQuit: false, serverManager: manager,
+        console, quitOperation: null, activeBatchExports: new Set(), allowQuit: false, serverManager: manager,
         stopServer: () => manager.stop({ onlyIfIdle: true }),
         desktopShell: { destroyTray: () => events.push('tray'), getMainWindow: () => parent },
         electronApp: { quit: () => events.push('quit') },

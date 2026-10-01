@@ -74,6 +74,7 @@ test('desktop batch download preserves every original filename, format, and byte
   assert.equal(result.savedCount, 3);
   assert.equal(new Set(signals).size, 4, 'metadata and each file have independent deadlines');
   assert.deepEqual(result.filenames, files.map((file) => file.name));
+  assert.deepEqual((await fs.readdir(destinationDir)).sort(), files.map((file) => file.name).sort());
   for (const file of files) {
     assert.deepEqual(await fs.readFile(path.join(destinationDir, file.name)), file.bytes);
   }
@@ -163,6 +164,75 @@ test('desktop batch download adds numeric suffixes instead of overwriting files'
   assert.equal(await fs.readFile(path.join(destinationDir, 'photo.jpg'), 'utf8'), 'existing file');
   assert.equal(await fs.readFile(path.join(destinationDir, 'photo (1).jpg'), 'utf8'), 'another existing file');
   assert.equal(await fs.readFile(path.join(destinationDir, 'photo (2).jpg'), 'utf8'), 'downloaded file');
+});
+
+for (const phase of ['write', 'publication']) {
+  test(`${phase} failure leaves no final partial file or temporary file`, async (t) => {
+    const destinationDir = path.join(testRoot, `failure-${phase}`);
+    await fs.mkdir(destinationDir);
+    const failure = Object.assign(new Error(`injected ${phase} failure`), { code: phase === 'write' ? 'ENOSPC' : 'EIO' });
+    const fsApi = { ...fs };
+    fsApi.open = async (filename, flags) => {
+      assert.equal(path.dirname(filename), destinationDir);
+      assert.ok(path.basename(filename).startsWith('.'));
+      assert.equal(flags, 'wx');
+      const handle = await fs.open(filename, flags);
+      if (phase === 'write') {
+        const write = handle.writeFile.bind(handle);
+        t.mock.method(handle, 'writeFile', async () => { await write('partial'); throw failure; });
+      }
+      return handle;
+    };
+    if (phase === 'publication') fsApi.link = async (source) => {
+      assert.equal(await fs.readFile(source, 'utf8'), 'complete bytes');
+      throw failure;
+    };
+    await assert.rejects(downloadBatchToFolder({
+      batchId: 'batch_failure', destinationDir, fsApi, serverOrigin: 'http://localhost:8787',
+      fetchImpl: createBatchFetch({ batchId: 'batch_failure', files: [{ name: 'photo.jpg', bytes: 'complete bytes' }] }),
+    }), (error) => error === failure);
+    assert.deepEqual(await fs.readdir(destinationDir), []);
+  });
+}
+
+test('a competing final filename is preserved and publication retries the next suffix', async () => {
+  const destinationDir = path.join(testRoot, 'publication-race');
+  await fs.mkdir(destinationDir);
+  let attempts = 0;
+  const result = await downloadBatchToFolder({
+    batchId: 'batch_race', destinationDir, serverOrigin: 'http://localhost:8787',
+    fetchImpl: createBatchFetch({ batchId: 'batch_race', files: [{ name: 'photo.jpg', bytes: 'downloaded' }] }),
+    fsApi: { ...fs, link: async (source, target) => {
+      if (attempts++ === 0) await fs.writeFile(target, 'user file', { flag: 'wx' });
+      return fs.link(source, target);
+    } },
+  });
+  assert.deepEqual(result.filenames, ['photo (1).jpg']);
+  assert.equal(attempts, 2);
+  assert.equal(await fs.readFile(path.join(destinationDir, 'photo.jpg'), 'utf8'), 'user file');
+  assert.equal(await fs.readFile(path.join(destinationDir, 'photo (1).jpg'), 'utf8'), 'downloaded');
+  assert.deepEqual((await fs.readdir(destinationDir)).sort(), ['photo (1).jpg', 'photo.jpg']);
+});
+
+test('concurrent exports use independent temporary files and never overwrite each other', async () => {
+  const destinationDir = path.join(testRoot, 'concurrent');
+  await fs.mkdir(destinationDir);
+  const temporaryPaths = new Set();
+  const fsApi = { ...fs, open: async (name, flags) => {
+    assert.equal(temporaryPaths.has(name), false);
+    temporaryPaths.add(name);
+    return fs.open(name, flags);
+  } };
+  const results = await Promise.all(Array.from({ length: 4 }, (_, index) => downloadBatchToFolder({
+    batchId: 'batch_concurrent', destinationDir, fsApi, serverOrigin: 'http://localhost:8787',
+    fetchImpl: createBatchFetch({ batchId: 'batch_concurrent', files: [{ name: 'photo.jpg', bytes: `photo ${index}` }] }),
+  })));
+  assert.equal(temporaryPaths.size, 4);
+  assert.equal(new Set(results.map((result) => result.filenames[0])).size, 4);
+  for (const [index, result] of results.entries()) {
+    assert.equal(await fs.readFile(path.join(destinationDir, result.filenames[0]), 'utf8'), `photo ${index}`);
+  }
+  assert.equal((await fs.readdir(destinationDir)).length, 4);
 });
 
 test('desktop batch download rejects unsafe server filenames', async () => {

@@ -3,6 +3,9 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, beforeEach } from 'node:test';
+import { once } from 'node:events';
+import express from 'express';
+import { imageFixture } from './helpers/image-fixtures.mjs';
 
 const dataRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'snapoverlan-retention-'));
 process.env.SNAPOVERLAN_DATA_DIR = dataRoot;
@@ -18,8 +21,22 @@ const {
 } = await import('../app/server/storage.js');
 
 const batchesDir = path.join(dataRoot, 'batches');
-after(() => fs.rm(dataRoot, { recursive: true, force: true }));
+const { createUploadsRouter } = await import('../app/server/routes/uploads.js');
+const requests = [];
+const events = [];
+const app = express();
+app.use((req, _res, next) => { requests.push(req); next(); });
+app.use('/api', createUploadsRouter({ onUploadCompleted: (event) => events.push(event) }));
+const server = app.listen(0, '127.0.0.1');
+await once(server, 'listening');
+after(async () => {
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+  await fs.rm(dataRoot, { recursive: true, force: true });
+});
 beforeEach(async () => {
+  requests.length = 0;
+  events.length = 0;
   await ensureStorageDirectories();
   await clearAllBatches();
 });
@@ -30,6 +47,75 @@ async function createBatch(id, createdAt) {
   await fs.writeFile(path.join(batchDir, '.batch.json'), `${JSON.stringify({ id, createdAt })}\n`);
   await fs.writeFile(path.join(batchDir, 'photo.jpg'), 'photo');
   return batchDir;
+}
+
+async function uploadPhoto() {
+  const form = new FormData();
+  form.append('photos', new Blob([await imageFixture('image/png')], { type: 'image/png' }), 'photo.png');
+  return fetch(`http://127.0.0.1:${server.address().port}/api/upload`, { method: 'POST', body: form });
+}
+
+test('post-commit retention failure returns success and preserves the current upload', async (t) => {
+  await Promise.all(Array.from({ length: 50 }, (_, i) =>
+    createBatch(`batch_existing_${i}`, new Date(2000, 0, i + 1).toISOString())));
+  const oldest = path.join(batchesDir, 'batch_existing_0');
+  const failure = Object.assign(new Error('Old batch is locked'), { code: 'EPERM' });
+  const originalRm = fs.rm;
+  const rm = t.mock.method(fs, 'rm', async (target, options) => {
+    if (target === oldest) throw failure;
+    return originalRm(target, options);
+  });
+  const warn = t.mock.method(console, 'warn', () => {});
+  const response = await uploadPhoto();
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.files.length, 1);
+  const req = requests.at(-1);
+  assert.equal(req.uploadCommitted, true);
+  const batches = await listBatches();
+  assert.equal(batches.length, 51);
+  assert.equal(batches.find((batch) => batch.current)?.id, req.uploadBatchId);
+  assert.deepEqual(await fs.readFile(path.join(batchesDir, req.uploadBatchId, body.files[0].name)), await imageFixture('image/png'));
+  assert.deepEqual(await listLatestFiles(), body.files);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].batchId, req.uploadBatchId);
+  assert.equal(warn.mock.calls.length, 1);
+  assert.match(warn.mock.calls[0].arguments[0], /retention after committing upload/);
+  assert.equal(warn.mock.calls[0].arguments[1], failure);
+  assert.deepEqual(rm.mock.calls.find((call) => call.arguments[0] === oldest).arguments[1],
+    { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  rm.mock.restore();
+  await ensureStorageDirectories();
+  assert.equal((await listBatches()).length, 50);
+  assert.equal((await listBatches()).find((batch) => batch.current)?.id, req.uploadBatchId);
+  await assert.rejects(fs.stat(oldest), { code: 'ENOENT' });
+});
+
+for (const stage of ['rename', 'metadata', 'current-batch']) {
+  test(`pre-commit ${stage} failure still fails the upload`, async (t) => {
+    await createBatch('batch_previous', '2000-01-01T00:00:00.000Z');
+    await selectBatch('batch_previous');
+    const method = 'rename';
+    const original = fs[method];
+    t.mock.method(fs, method, async (...args) => {
+      const target = String(args[0]);
+      if ((stage === 'rename' && path.dirname(target) === path.join(dataRoot, 'upload-tmp'))
+        || (stage === 'metadata' && path.basename(String(args[1])) === '.batch.json')
+        || (stage === 'current-batch' && args[1] === path.join(dataRoot, 'current-batch.json'))) {
+        throw new Error(`Injected ${stage} failure`);
+      }
+      return original(...args);
+    });
+    const response = await uploadPhoto();
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error, `Injected ${stage} failure`);
+    assert.notEqual(requests.at(-1).uploadCommitted, true);
+    assert.equal(events.length, 0);
+    const batches = await listBatches();
+    assert.deepEqual(batches.map((batch) => batch.id), ['batch_previous']);
+    assert.equal(batches[0].current, true);
+    assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
+  });
 }
 
 test('obsolete saved settings are ignored and preserved while old batches survive startup and uploads', async () => {

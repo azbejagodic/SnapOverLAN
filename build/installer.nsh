@@ -2,6 +2,7 @@
 !define SNAPOVERLAN_FIREWALL_DESC "allow phones on the same private LAN to reach SnapOverLAN on port 8787"
 !define SNAPOVERLAN_MDNS_FIREWALL_RULE "SnapOverLAN mDNS"
 !define SNAPOVERLAN_MDNS_FIREWALL_DESC "allow local devices to discover SnapOverLAN over mDNS"
+!define SNAPOVERLAN_FIREWALL_WARNING "SnapOverLAN installed, but Windows Firewall could not be configured completely. Phone connectivity may require manually allowing SnapOverLAN through Windows Firewall on your Private network."
 
 !ifndef BUILD_UNINSTALLER
 !include "${__FILEDIR__}\update-progress-ui.nsh"
@@ -9,6 +10,8 @@
 
 !macro customHeader
   Var SnapOverLANUpdateProgressVisible
+  Var SnapOverLANTcpFirewallResult
+  Var SnapOverLANMdnsFirewallResult
 
   ; This callback also runs on aborted/failed installs, so the installer never
   ; leaves its modeless update-progress window behind.
@@ -95,10 +98,21 @@
 
   DetailPrint "Configuring Windows Firewall rule: ${SNAPOVERLAN_FIREWALL_RULE}"
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${SNAPOVERLAN_FIREWALL_RULE}"'
-  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${SNAPOVERLAN_FIREWALL_RULE}" dir=in action=allow protocol=TCP localport=8787 profile=private enable=yes description="${SNAPOVERLAN_FIREWALL_DESC}"'
+  Pop $0 ; An absent old rule is harmless; consume the result.
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${SNAPOVERLAN_FIREWALL_RULE}" dir=in action=allow protocol=TCP localport=8787 remoteip=localsubnet profile=private program="$appExe" enable=yes description="${SNAPOVERLAN_FIREWALL_DESC}"'
+  Pop $SnapOverLANTcpFirewallResult
   DetailPrint "Configuring Windows Firewall rule: ${SNAPOVERLAN_MDNS_FIREWALL_RULE}"
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${SNAPOVERLAN_MDNS_FIREWALL_RULE}"'
+  Pop $0
   nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${SNAPOVERLAN_MDNS_FIREWALL_RULE}" dir=in action=allow protocol=UDP localport=5353 remoteip=localsubnet profile=private enable=yes description="${SNAPOVERLAN_MDNS_FIREWALL_DESC}"'
+  Pop $SnapOverLANMdnsFirewallResult
+  ${If} $SnapOverLANTcpFirewallResult != "0"
+  ${OrIf} $SnapOverLANMdnsFirewallResult != "0"
+    DetailPrint "${SNAPOVERLAN_FIREWALL_WARNING}"
+    DetailPrint "Firewall ADD results: TCP=$SnapOverLANTcpFirewallResult; mDNS=$SnapOverLANMdnsFirewallResult"
+    ; /SD keeps silent installs/updates non-interactive; the warning is still logged.
+    MessageBox MB_OK|MB_ICONEXCLAMATION "${SNAPOVERLAN_FIREWALL_WARNING}" /SD IDOK
+  ${EndIf}
 
   ; Builder normally launches the all-users Start Menu shortcut here. StdUtils
   ; reports success but does not resolve that shortcut after credentialed UAC.
@@ -117,5 +131,7 @@
 !macro customUnInstall
   DetailPrint "Removing Windows Firewall rule: ${SNAPOVERLAN_FIREWALL_RULE}"
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${SNAPOVERLAN_FIREWALL_RULE}"'
+  Pop $0
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${SNAPOVERLAN_MDNS_FIREWALL_RULE}"'
+  Pop $0
 !macroend

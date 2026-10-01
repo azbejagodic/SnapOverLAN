@@ -5,6 +5,7 @@ import {
   MAX_FILES,
   MAX_FILE_SIZE,
   UPLOAD_TEMP_DIR,
+  UPLOAD_DISK_SPACE_ERROR,
 } from '../config.js';
 import {
   createBatchId,
@@ -69,7 +70,11 @@ const finalizeUploadedBatch = async (req) => {
   assertUploadConnected(req);
   await setCurrentBatchId(req.uploadBatchId);
   req.uploadCommitted = true;
-  await applyBatchRetention();
+  try {
+    await applyBatchRetention();
+  } catch (error) {
+    console.warn(`Could not apply retention after committing upload ${req.uploadBatchId}:`, error);
+  }
   return toUploadedFileRecords(req.files);
 };
 
@@ -136,6 +141,10 @@ const uploadErrorHandler = async (err, req, res, next) => {
     catch (error) { console.warn('Could not remove interrupted or failed upload staging:', error); }
   }
   if (req.aborted || req.uploadInterrupted || res.destroyed) return;
+  if (err.code === 'ENOSPC' || err.code === 'EDQUOT') {
+    res.status(507).json({ error: UPLOAD_DISK_SPACE_ERROR });
+    return;
+  }
   if (err instanceof multer.MulterError) {
     let message = err.message;
     if (err.code === 'LIMIT_FILE_COUNT') message = `Maximum ${MAX_FILES} files are allowed.`;

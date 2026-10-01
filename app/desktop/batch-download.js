@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 const BATCH_ID_PATTERN = /^batch_[a-zA-Z0-9_-]+$/;
+const DOWNLOAD_REQUEST_TIMEOUT_MS = 30_000;
 
 const assertValidBatchId = (batchId) => {
   if (typeof batchId !== 'string' || !BATCH_ID_PATTERN.test(batchId)) {
@@ -21,10 +22,17 @@ const assertValidFilename = (filename) => {
   }
 };
 
-const fetchOrThrow = async (fetchImpl, url) => {
-  const response = await fetchImpl(url);
-  if (!response.ok) throw new Error(`Download failed (${response.status}).`);
-  return response;
+const fetchOrThrow = async (fetchImpl, url, readBody) => {
+  const signal = AbortSignal.timeout(DOWNLOAD_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(url, { signal });
+    if (!response.ok) throw new Error(`Download failed (${response.status}).`);
+    // The request deadline also covers reading the response body.
+    return await readBody(response);
+  } catch (error) {
+    if (signal.aborted) throw new Error('Download timed out. Please try again.');
+    throw error;
+  }
 };
 
 const writeFileWithoutOverwrite = async ({ bytes, destinationDir, filename, fsApi = fs }) => {
@@ -55,8 +63,7 @@ const downloadBatchToFolder = async ({
   }
 
   const batchUrl = new URL(`/api/batches/${encodeURIComponent(batchId)}`, serverOrigin);
-  const batchResponse = await fetchOrThrow(fetchImpl, batchUrl);
-  const batch = await batchResponse.json();
+  const batch = await fetchOrThrow(fetchImpl, batchUrl, (response) => response.json());
   const files = Array.isArray(batch?.files) ? batch.files : [];
   if (files.length === 0) throw new Error('The selected batch has no files.');
 
@@ -67,8 +74,7 @@ const downloadBatchToFolder = async ({
       `/api/batches/${encodeURIComponent(batchId)}/files/${encodeURIComponent(file.name)}`,
       serverOrigin,
     );
-    const fileResponse = await fetchOrThrow(fetchImpl, fileUrl);
-    const bytes = Buffer.from(await fileResponse.arrayBuffer());
+    const bytes = Buffer.from(await fetchOrThrow(fetchImpl, fileUrl, (response) => response.arrayBuffer()));
     filenames.push(await writeFileWithoutOverwrite({
       bytes,
       destinationDir,

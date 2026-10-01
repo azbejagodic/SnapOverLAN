@@ -1,8 +1,82 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { createDesktopShell, isSafeExternalUrl } from '../app/desktop/shell.js';
 import { createRendererServerClient } from '../app/desktop/renderer-server-client.js';
+
+const mainSource = await readFile(new URL('../app/main.js', import.meta.url), 'utf8');
+const handlersSource = mainSource.slice(mainSource.indexOf('const handleServerControl ='), mainSource.indexOf('const gotLock ='));
+const createIpcHarness = () => {
+  const handlers = new Map();
+  const calls = [];
+  const sender = { mainFrame: {} };
+  const state = { state: 'online' };
+  const response = { files: [] };
+  const download = { savedCount: 1 };
+  const context = {
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    desktopShell: { isMainWindowSender: (candidate) => candidate === sender },
+    getServerStatePayload: () => { calls.push(['state']); return state; },
+    rendererServerRequest: async (...args) => { calls.push(['request', ...args]); return response; },
+    startServer: async () => { calls.push(['start']); return state; },
+    backgroundMode: false,
+    setBackgroundMode: async (enabled) => {
+      calls.push(['background', enabled]);
+      context.backgroundMode = Boolean(enabled);
+      return context.backgroundMode;
+    },
+    electronApp: { getPath: (name) => { calls.push(['path', name]); return 'downloads'; } },
+    downloadBatchToFolder: async (options) => {
+      calls.push(['download', options.batchId, options.destinationDir, options.serverOrigin]);
+      return download;
+    },
+    shell: { openPath: async (directory) => { calls.push(['open', directory]); return ''; } },
+    SERVER_ORIGIN: 'http://localhost:8787',
+    console,
+  };
+  runInNewContext(handlersSource, context);
+  return { handlers, calls, sender, context, state, response, download };
+};
+
+const channels = [
+  ['server:get-state', [], (harness) => harness.state, [['state']]],
+  ['server:request', ['/api/batches', 'GET'], (harness) => harness.response, [['request', '/api/batches', 'GET']]],
+  ['server:retry', [], (harness) => harness.state, [['start']]],
+  ['background:get', [], () => false, []],
+  ['background:set', [true], () => true, [['background', true]]],
+  ['batch:download', ['batch_test'], (harness) => harness.download,
+    [['path', 'downloads'], ['download', 'batch_test', 'downloads', 'http://localhost:8787'], ['open', 'downloads']]],
+];
+
+test('sender validation tests cover every renderer IPC handler', () => {
+  const registered = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((match) => match[1]);
+  assert.deepEqual(registered.sort(), channels.map(([channel]) => channel).sort());
+  assert.equal(createIpcHarness().handlers.size, channels.length);
+});
+
+for (const [channel, args, expectedResult, expectedCalls] of channels) {
+  test(`${channel} accepts the main window main frame and preserves its result`, async () => {
+    const harness = createIpcHarness();
+    const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
+    assert.strictEqual(await harness.handlers.get(channel)(event, ...args), expectedResult(harness));
+    assert.deepEqual(harness.calls, expectedCalls);
+  });
+
+  for (const source of ['other window', 'subframe']) {
+    test(`${channel} rejects ${source} without side effects`, async () => {
+      const harness = createIpcHarness();
+      const sender = source === 'other window' ? { mainFrame: {} } : harness.sender;
+      const event = { sender, senderFrame: source === 'subframe' ? {} : sender.mainFrame };
+      const message = channel === 'server:request' ? 'Server request was rejected.'
+        : channel === 'batch:download' ? 'Batch download request was rejected.' : 'IPC request was rejected.';
+      await assert.rejects(async () => harness.handlers.get(channel)(event, ...args), { message });
+      assert.deepEqual(harness.calls, [], 'no server calls, settings writes, downloads, or folder opening');
+      assert.equal(harness.context.backgroundMode, false);
+    });
+  }
+}
 
 test('external URL protocol allowlist rejects executable, local-file, and malformed URLs', () => {
   for (const url of ['http://localhost:8787/', 'https://github.com/azbejagodic/SnapOverLAN']) assert.equal(isSafeExternalUrl(url), true);

@@ -412,6 +412,8 @@ const invalidPhotoMessage = 'One or more selected files are not valid supported 
 const heifFailureMessage = 'One or more HEIC/HEIF photos could not be read.';
 const pixelLimitMessage = 'One or more photos exceed the 60 MP upload limit.';
 const uploadErrorCases = [
+  ['busy upload', 429, { error: 'Another upload is in progress. Try again shortly.' }, 'Another upload is in progress. Try again shortly.'],
+  ['low disk', 507, { error: 'The PC needs more free disk space.' }, 'The PC needs more free disk space.'],
   ['20MB size', 400, { error: 'Each image must be <= 20MB.' }, 'Each photo must be 20 MB or smaller.'],
   ['worker size', 400, { error: 'Invalid image: Image is empty or exceeds the 20MB file limit.' }, 'Each photo must be 20 MB or smaller.'],
   ['10 files', 400, { error: 'Maximum 10 files are allowed.' }, 'You can upload up to 10 photos at a time.'],

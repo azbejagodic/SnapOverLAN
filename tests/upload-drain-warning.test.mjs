@@ -27,7 +27,7 @@ for (const installUpdate of [false, true]) {
     test(`${installUpdate ? 'Restart & Update' : 'Quit'} via ${transport} blocks immediately, admits uploads, and retries current state`, async (t) => {
       t.mock.timers.enable({ apis: ['setTimeout'] });
       const lifecycle = createUploadLifecycle({ logger: { warn() { assert.fail('unexpected drain timer'); } } });
-      const upload = beginUpload(lifecycle);
+      let upload = beginUpload(lifecycle);
       const events = [];
       const child = new EventEmitter();
       child.exitCode = null;
@@ -92,8 +92,8 @@ for (const installUpdate of [false, true]) {
         assert.equal(lifecycle.getDrainState().phase, 'idle');
         assert.equal(manager.getState().state, 'online');
         assert.equal(context.allowQuit, false);
-        const additional = beginUpload(lifecycle);
-        additional.emit('finish');
+        upload.emit('finish');
+        upload = beginUpload(lifecycle);
         t.mock.timers.tick(120000);
         dismiss();
         assert.equal(await pending, installUpdate ? 'upload-blocked' : false);

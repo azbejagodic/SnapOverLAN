@@ -56,19 +56,92 @@ test('desktop batch download preserves every original filename, format, and byte
     { name: 'phone-original.heic', bytes: Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]) },
     { name: 'camera-original.jpg', bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]) },
   ];
+  const signals = [];
+  const fetchBatch = createBatchFetch({ batchId, files });
 
   const result = await downloadBatchToFolder({
     batchId,
     destinationDir,
-    fetchImpl: createBatchFetch({ batchId, files }),
+    fetchImpl: (url, { signal }) => {
+      assert.ok(signal instanceof AbortSignal);
+      assert.equal(signal.aborted, false);
+      signals.push(signal);
+      return fetchBatch(url);
+    },
     serverOrigin: 'http://localhost:8787',
   });
 
   assert.equal(result.savedCount, 3);
+  assert.equal(new Set(signals).size, 4, 'metadata and each file have independent deadlines');
   assert.deepEqual(result.filenames, files.map((file) => file.name));
   for (const file of files) {
     assert.deepEqual(await fs.readFile(path.join(destinationDir, file.name)), file.bytes);
   }
+});
+
+for (const request of ['metadata', 'file']) {
+  for (const phase of ['headers', 'body']) {
+    test(`${request} timeout during ${phase} has stable text and preserves saved files for retry`, async (t) => {
+      const controllers = [];
+      t.mock.method(AbortSignal, 'timeout', (milliseconds) => {
+        assert.equal(milliseconds, 30_000);
+        const controller = new AbortController();
+        controllers.push(controller);
+        return controller.signal;
+      });
+      const batchId = 'batch_timeout';
+      const destinationDir = path.join(testRoot, `timeout-${request}-${phase}`);
+      await fs.mkdir(destinationDir);
+      const files = [
+        { name: 'first.jpg', bytes: 'first original' },
+        { name: 'second.jpg', bytes: 'second original' },
+      ];
+      const fetchBatch = createBatchFetch({ batchId, files });
+      const fetchImpl = async (url, { signal }) => {
+        assert.equal(signal, controllers.at(-1).signal);
+        const target = request === 'metadata'
+          ? !url.pathname.includes('/files/') : url.pathname.endsWith('/second.jpg');
+        if (!target) return fetchBatch(url);
+        const timeout = () => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+          controllers.at(-1).abort(new DOMException('deadline exceeded', 'TimeoutError'));
+        });
+        if (phase === 'headers') return timeout();
+        return { ok: true, json: timeout, arrayBuffer: timeout };
+      };
+      await assert.rejects(downloadBatchToFolder({
+        batchId, destinationDir, fetchImpl, serverOrigin: 'http://localhost:8787',
+      }), { message: 'Download timed out. Please try again.' });
+      assert.deepEqual(await fs.readdir(destinationDir), request === 'file' ? ['first.jpg'] : []);
+      if (request === 'file') {
+        assert.equal(await fs.readFile(path.join(destinationDir, 'first.jpg'), 'utf8'), 'first original');
+      }
+      const retry = await downloadBatchToFolder({
+        batchId, destinationDir, fetchImpl: fetchBatch, serverOrigin: 'http://localhost:8787',
+      });
+      assert.deepEqual(retry.filenames, request === 'file' ? ['first (1).jpg', 'second.jpg'] : ['first.jpg', 'second.jpg']);
+      assert.equal(await fs.readFile(path.join(destinationDir, 'first.jpg'), 'utf8'), 'first original');
+    });
+  }
+}
+
+for (const request of ['metadata', 'file']) {
+  test(`${request} HTTP failure retains the existing status error`, async () => {
+    await assert.rejects(downloadBatchToFolder({
+      batchId: 'batch_missing', destinationDir: testRoot, serverOrigin: 'http://localhost:8787',
+      fetchImpl: async (url) => request === 'file' && !url.pathname.includes('/files/')
+        ? { ok: true, json: async () => ({ files: [{ name: 'missing.jpg' }] }) }
+        : { ok: false, status: 404 },
+    }), { message: 'Download failed (404).' });
+  });
+}
+
+test('ordinary request errors propagate without becoming timeout errors', async () => {
+  const error = new TypeError('fetch failed');
+  await assert.rejects(downloadBatchToFolder({
+    batchId: 'batch_network', destinationDir: testRoot, serverOrigin: 'http://localhost:8787',
+    fetchImpl: async () => { throw error; },
+  }), (received) => received === error);
 });
 
 test('desktop batch download adds numeric suffixes instead of overwriting files', async () => {

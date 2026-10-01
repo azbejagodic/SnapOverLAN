@@ -115,6 +115,8 @@ Supported upload formats are JPEG, PNG, WebP, HEIC, and HEIF. Each photo sent to
 
 The included web app manifest supports adding SnapOverLAN to the phone's home screen where the browser offers that option. It is served from the PC over the local network and is not an offline app.
 
+Each server accepts one upload at a time, including validation and cleanup. Before receiving files, it requires 1 GiB of free-space reserve plus the maximum 200 MiB batch allowance on the staging drive. Busy or low-disk requests are rejected with an explanation; selected photos stay available for manual retry. Disk space can still change during upload, so a disk-full failure also asks you to free space on the PC.
+
 ### Fast Upload
 
 Fast Upload is enabled by default and remembers the preference in the phone browser. It attempts to make large photos faster to transfer before upload:

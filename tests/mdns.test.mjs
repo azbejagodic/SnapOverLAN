@@ -407,7 +407,8 @@ test('Electron phone setup prefers stableUrl and diagnostics retain raw LAN deta
   assert.match(rendererSource, /renderUrlList\(diagnosticsUrls, 'Detected LAN URLs',[\s\S]*?isPrivateLanUrl\(item.url\)/);
 });
 
-test('server status exposes persistent identity and cleanly stops successful mDNS', async () => {
+test('server status exposes persistent identity and cleanly stops successful mDNS', async (t) => {
+  t.mock.method(os, 'networkInterfaces', () => ({ wifi: [{ family: 'IPv4', internal: false, address: '192.168.1.25' }] }));
   const events = [];
   let advertisedDeviceId = '';
   const server = await startServer({
@@ -441,6 +442,113 @@ test('server status exposes persistent identity and cleanly stops successful mDN
 
   await stopServer();
   assert.deepEqual(events, ['stop']);
+});
+
+test('live LAN changes refresh only mDNS, serialize ticks, recover, and stop cleanly', async (t) => {
+  let addresses = ['10.1.2.3'];
+  t.mock.method(os, 'networkInterfaces', () => ({ wifi: addresses.map((address) => ({
+    family: 'IPv4', internal: false, address,
+  })) }));
+  let monitor;
+  let cleared = false;
+  let unrefed = false;
+  const timer = { unref() { unrefed = true; } };
+  const originalSet = globalThis.setInterval;
+  const originalClear = globalThis.clearInterval;
+  t.mock.method(globalThis, 'setInterval', (callback, delay, ...args) => {
+    if (delay !== 15_000) return originalSet(callback, delay, ...args);
+    monitor = callback;
+    return timer;
+  });
+  t.mock.method(globalThis, 'clearInterval', (value) => {
+    if (value === timer) cleared = true;
+    else originalClear(value);
+  });
+  const starts = [];
+  let stops = 0;
+  let active = 0;
+  let nextGate = null;
+  let release = () => {};
+  t.after(async () => { release(); await stopServer(); });
+  const server = await startServer({ host: '127.0.0.1', port: 0, log: false,
+    mdnsFactory: ({ deviceId, port, getLanAddresses }) => {
+      const address = getPreferredLanIpv4Address(getLanAddresses());
+      const gate = nextGate;
+      nextGate = null;
+      let stopped = false;
+      return {
+        start: async () => {
+          assert.equal(active, 0, 'previous advertiser must stop before another starts');
+          active += 1;
+          starts.push({ deviceId, address });
+          if (gate) await gate;
+          return { started: true, ipv4Addresses: [address], stableUrl: formatStableUrl(deviceId, port) };
+        },
+        stop: async () => { assert.equal(stopped, false); stopped = true; active -= 1; stops += 1; },
+      };
+    },
+  });
+  const port = server.address().port;
+  const status = async () => {
+    assert.equal(server.listening, true);
+    const response = await fetch(`http://127.0.0.1:${port}/api/server-status`);
+    assert.equal(response.status, 200);
+    const value = await response.json();
+    assert.equal(value.status, 'listening');
+    return value;
+  };
+  const tick = async () => { monitor(); await new Promise((resolve) => setImmediate(resolve)); };
+  const stable = (await status()).stableUrl;
+  assert.ok(stable);
+  assert.equal(unrefed, true);
+  await tick();
+  addresses = ['192.168.1.20', '10.1.2.3'];
+  await tick();
+  assert.equal(starts.length, 1, 'a newly preferred adapter must not cause flapping');
+  assert.equal((await status()).stableUrl, stable);
+
+  addresses = ['192.168.1.20'];
+  assert.equal((await status()).stableUrl, '', 'stale URL disappears even before the monitor ticks');
+  nextGate = new Promise((resolve) => { release = resolve; });
+  await tick();
+  await tick();
+  await tick();
+  assert.equal(starts.length, 2);
+  assert.equal(stops, 1);
+  assert.equal((await status()).primaryLanUrl, `http://192.168.1.20:${port}`);
+  assert.equal((await status()).stableUrl, '');
+  release();
+  await tick();
+  assert.equal((await status()).stableUrl, stable);
+
+  addresses = [];
+  assert.equal((await status()).stableUrl, '');
+  await tick();
+  await tick();
+  assert.equal(active, 0);
+  assert.equal(stops, 2);
+  assert.equal(starts.length, 2);
+  assert.deepEqual((await status()).lanUrls, []);
+  addresses = ['192.168.2.30'];
+  await tick();
+  assert.equal((await status()).stableUrl, stable);
+  assert.equal((await status()).primaryLanUrl, `http://192.168.2.30:${port}`);
+  assert.equal(new Set(starts.map((entry) => entry.deviceId)).size, 1);
+
+  addresses = ['192.168.3.40'];
+  nextGate = new Promise((resolve) => { release = resolve; });
+  await tick();
+  const stopping = stopServer();
+  await tick();
+  assert.equal(cleared, true);
+  assert.equal(starts.length, 4);
+  release();
+  await stopping;
+  await tick();
+  assert.equal(active, 0);
+  assert.equal(stops, 4);
+  assert.equal(starts.length, 4);
+  assert.equal(server.listening, false);
 });
 
 test('mDNS startup failure keeps the HTTP server and IP fallback working', async () => {

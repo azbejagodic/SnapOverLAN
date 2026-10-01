@@ -21,7 +21,7 @@ const createServerApp = ({
     methods: req.method === 'OPTIONS' ? req.get('access-control-request-method') : req.method,
   }));
 
-  app.use(createLanAccessPolicy({ isLoopbackRequest }));
+  app.use(createLanAccessPolicy({ isLoopbackRequest, getServerStatus }));
   app.use((req, res, next) => {
     if (!isLoopbackRequest(req)) {
       next();

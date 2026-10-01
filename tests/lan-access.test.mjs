@@ -17,13 +17,16 @@ const [{ createServerApp }, { ensureStorageDirectories }] = await Promise.all([
 
 await ensureStorageDirectories();
 let autoCopyEnabled = false;
+let advertisedAddress = '192.168.1.18';
+let advertisedHostname = 'snap-test.local';
 const app = createServerApp({
   getAutoCopySetting: () => autoCopyEnabled,
   getServerStatus: () => ({
     status: 'listening',
-    port: 8787,
-    stableUrl: 'http://snap-test.local:8787',
-    lanUrls: [{ address: '192.168.1.18', url: 'http://192.168.1.18:8787' }],
+    port: server.address().port,
+    hostname: advertisedHostname,
+    stableUrl: `http://${advertisedHostname}:${server.address().port}`,
+    lanUrls: [{ address: advertisedAddress, url: `http://${advertisedAddress}:${server.address().port}` }],
   }),
   isLoopbackRequest: (req) => req.get('x-snapoverlan-test-client') !== 'lan',
   onShutdown: () => {
@@ -48,14 +51,35 @@ after(async () => {
   await fs.rm(dataRoot, { recursive: true, force: true });
 });
 
-const request = (pathname, options = {}) => {
+const request = async (pathname, options = {}) => {
   const { lan = false, headers = {}, ...fetchOptions } = options;
-  return fetch(`${origin}${pathname}`, {
+  const requestOptions = {
     ...fetchOptions,
     headers: {
+      ...(lan ? { Host: `${advertisedAddress}:${server.address().port}` } : {}),
       ...headers,
       ...(lan ? { 'x-snapoverlan-test-client': 'lan' } : {}),
     },
+  };
+  if (!lan) return fetch(`${origin}${pathname}`, requestOptions);
+  // Native HTTP preserves the actual Host header; fetch may replace it with
+  // the transport's loopback address. Only the peer classification is mocked.
+  const serialized = new Request(`${origin}${pathname}`, requestOptions);
+  const bytes = Buffer.from(await serialized.arrayBuffer());
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${origin}${pathname}`, {
+      method: serialized.method, headers: Object.fromEntries(serialized.headers),
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('error', reject);
+      res.on('end', () => resolve(new Response(
+        serialized.method === 'HEAD' ? null : Buffer.concat(chunks),
+        { status: res.statusCode, headers: res.headers },
+      )));
+    });
+    req.on('error', reject);
+    req.end(bytes);
   });
 };
 
@@ -66,7 +90,7 @@ const uploadFiles = async (files, { lan = false } = {}) => {
   }
   const response = await request('/api/upload', {
     body: form, lan, method: 'POST',
-    headers: lan ? { Origin: 'http://192.168.1.18:8787', 'Sec-Fetch-Site': 'same-origin' } : {},
+    headers: lan ? { Origin: `http://${advertisedAddress}:${server.address().port}`, 'Sec-Fetch-Site': 'same-origin' } : {},
   });
   return { response, body: await response.json() };
 };
@@ -144,6 +168,74 @@ const browserUpload = async (headers) => {
     req.end(body);
   });
 };
+
+test('current LAN IP and stable hostname serve the PWA and accept intentional uploads', async () => {
+  for (const hostname of [advertisedAddress, advertisedHostname]) {
+    const host = `${hostname}:${server.address().port}`;
+    for (const method of ['GET', 'HEAD']) {
+      const response = await request('/', { lan: true, method, headers: { Host: host } });
+      assert.equal(response.status, 200);
+    }
+    for (const metadata of [
+      { Origin: `http://${host}`, Referer: `http://${host}/`, 'Sec-Fetch-Site': 'same-origin' },
+      { Referer: `http://${host}/`, 'Sec-Fetch-Site': 'same-origin' },
+      {},
+    ]) {
+      assert.equal(await browserUpload({ Host: host, 'x-snapoverlan-test-client': 'lan', ...metadata }), 200);
+    }
+  }
+});
+
+test('hostile LAN browser metadata and rebinding Hosts are rejected before staging', async () => {
+  const host = `${advertisedAddress}:${server.address().port}`;
+  const before = await request('/api/batches').then((response) => response.json());
+  for (const metadata of [
+    { Origin: 'https://evil.example' }, { Origin: 'null' }, { Origin: '' },
+    { Origin: `http://${host}`, Referer: 'https://evil.example/' },
+    { Referer: 'https://evil.example/' }, { Referer: 'invalid' },
+    { 'Sec-Fetch-Site': 'cross-site' },
+    { Origin: `http://${host}`, 'Sec-Fetch-Site': 'cross-site' },
+    { 'Sec-Fetch-Site': 'same-site' },
+    { Origin: `http://${advertisedAddress}:1` },
+  ]) {
+    assert.equal(await browserUpload({ Host: host, 'x-snapoverlan-test-client': 'lan', ...metadata }), 403);
+  }
+  for (const invalidHost of [
+    `rebound.evil.example:${server.address().port}`, `192.168.1.99:${server.address().port}`,
+    `snap-other.local:${server.address().port}`, `${advertisedAddress}:1`,
+    `127.0.0.1:${server.address().port}`, `evil.example@${host}`,
+  ]) {
+    for (const method of ['GET', 'HEAD']) {
+      assert.equal((await request('/', { lan: true, method, headers: { Host: invalidHost } })).status, 403);
+    }
+    assert.equal(await browserUpload({
+      Host: invalidHost, Origin: `http://${invalidHost}`, 'x-snapoverlan-test-client': 'lan',
+      'X-Forwarded-Host': host,
+    }), 403);
+  }
+  assert.deepEqual(await request('/api/batches').then((response) => response.json()), before);
+  assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
+});
+
+test('remote Host allowlist follows live LAN and stable hostname changes', async () => {
+  const previousAddress = advertisedAddress;
+  const previousHostname = advertisedHostname;
+  try {
+    advertisedAddress = '10.20.30.40';
+    advertisedHostname = 'snap-changed.local';
+    for (const hostname of [previousAddress, previousHostname]) {
+      assert.equal((await request('/app.js', { lan: true, headers: { Host: `${hostname}:${server.address().port}` } })).status, 403);
+    }
+    for (const hostname of [advertisedAddress, advertisedHostname]) {
+      const host = `${hostname}:${server.address().port}`;
+      assert.equal((await request('/app.js', { lan: true, headers: { Host: host } })).status, 200);
+      assert.equal(await browserUpload({ Host: host, Origin: `http://${host}`, 'x-snapoverlan-test-client': 'lan' }), 200);
+    }
+  } finally {
+    advertisedAddress = previousAddress;
+    advertisedHostname = previousHostname;
+  }
+});
 
 test('same-origin localhost and IP uploads preserve browser and native access', async () => {
   for (const hostname of ['localhost', '127.0.0.1']) {

@@ -1,3 +1,5 @@
+import { isIPv4 } from 'node:net';
+
 const REMOTE_PWA_PATHS = new Set([
   '/',
   '/app.js',
@@ -62,13 +64,47 @@ const isTrustedLocalBrowserRequest = (req) => {
   return true;
 };
 
-const createLanAccessPolicy = ({ isLoopbackRequest }) => (req, res, next) => {
-  if (!isExtensionBrowserRequest(req)
-    && (isRemotePwaRequest(req) || (isRemoteUploadRequest(req) && !isLoopbackRequest(req)))) {
+const getTrustedRemoteTarget = (req, status) => {
+  const host = req.get('host');
+  if (!/^[a-z0-9.-]+(?::[0-9]+)?$/i.test(host || '')) return null;
+  let target;
+  try { target = new URL(`http://${host}`); } catch { return null; }
+  if (Number(target.port || 80) !== status.port) return null;
+  const currentIp = isIPv4(target.hostname)
+    && status.lanUrls?.some((record) => record.address === target.hostname);
+  const stableHost = status.hostname && target.hostname === status.hostname.toLowerCase();
+  return currentIp || stableHost ? target : null;
+};
+
+const isTrustedRemoteUpload = (req, target) => {
+  const origin = req.get('origin');
+  const referer = req.get('referer');
+  const site = req.get('sec-fetch-site');
+  if (site && site !== 'none' && site !== 'same-origin') return false;
+  // Intentional native clients may omit browser metadata, but cannot override
+  // conflicting Origin, Referer, or Fetch Metadata headers.
+  if (origin === undefined && referer === undefined) return true;
+  if (origin !== undefined && origin !== target.origin) return false;
+  if (referer !== undefined) {
+    try { if (new URL(referer).origin !== target.origin) return false; }
+    catch { return false; }
+  }
+  return true;
+};
+
+const createLanAccessPolicy = ({ isLoopbackRequest, getServerStatus }) => (req, res, next) => {
+  if (!isLoopbackRequest(req)) {
+    if (isExtensionBrowserRequest(req) || (!isRemotePwaRequest(req) && !isRemoteUploadRequest(req))) {
+      res.sendStatus(404); return;
+    }
+    const target = getTrustedRemoteTarget(req, getServerStatus());
+    if (!target || (isRemoteUploadRequest(req) && !isTrustedRemoteUpload(req, target))) {
+      res.sendStatus(403); return;
+    }
     next();
     return;
   }
-  if (!isLoopbackRequest(req)) { res.sendStatus(404); return; }
+  if (isRemotePwaRequest(req) && !isExtensionBrowserRequest(req)) { next(); return; }
   if (!isTrustedLocalBrowserRequest(req)) { res.sendStatus(403); return; }
   next();
 };

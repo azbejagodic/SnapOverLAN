@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import cors from 'cors';
 import express from 'express';
-import { createLanAccessPolicy, isExtensionOrigin } from './access-policy.js';
+import { createLanAccessPolicy, isExtensionOrigin, isAllowedExtensionRequest } from './access-policy.js';
 import { PWA_DIR } from './config.js';
 import { createApiRouter } from './routes/api.js';
 import { createFilesRouter } from './routes/files.js';
@@ -16,10 +16,10 @@ const createServerApp = ({
   shutdownToken = crypto.randomBytes(32).toString('hex'),
 }) => {
   const app = express();
-  const loopbackCors = cors({
-    origin: (origin, callback) => callback(null, isExtensionOrigin(origin)),
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  });
+  const loopbackCors = cors((req, callback) => callback(null, {
+    origin: isExtensionOrigin(req.get('origin')) && isAllowedExtensionRequest(req),
+    methods: req.method === 'OPTIONS' ? req.get('access-control-request-method') : req.method,
+  }));
 
   app.use(createLanAccessPolicy({ isLoopbackRequest }));
   app.use((req, res, next) => {

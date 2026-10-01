@@ -145,13 +145,12 @@ const browserUpload = async (headers) => {
   });
 };
 
-test('same-origin localhost and IP uploads preserve trusted extension and native access', async () => {
+test('same-origin localhost and IP uploads preserve browser and native access', async () => {
   for (const hostname of ['localhost', '127.0.0.1']) {
     const host = `${hostname}:${server.address().port}`;
     for (const headers of [
       { Origin: `http://${host}`, 'Sec-Fetch-Site': 'same-origin' },
       { Referer: `http://${host}/`, 'Sec-Fetch-Site': 'same-origin' },
-      { Origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' },
       {},
     ]) {
       assert.equal(await browserUpload({ Host: host, ...headers }), 200);
@@ -222,12 +221,12 @@ test('LAN clients receive 404 for batch, file, diagnostics, and control APIs', a
 
 test('loopback desktop APIs and existing photo downloads remain available', async () => {
   const statusResponse = await request('/api/server-status', {
-    headers: { Origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' },
+    headers: { Origin: origin, 'Sec-Fetch-Site': 'same-origin' },
   });
   assert.equal(statusResponse.status, 200);
   assert.equal(
     statusResponse.headers.get('access-control-allow-origin'),
-    'chrome-extension://abcdefghijklmnopabcdefghijklmnop',
+    null,
   );
   assert.equal((await statusResponse.json()).status, 'listening');
 
@@ -281,15 +280,56 @@ test('extension IDs, preflight, thumbnails, and Auto-copy access work on loopbac
     const preflight = await request('/api/auto-copy', { method: 'OPTIONS', headers: { Origin: extensionOrigin, 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'content-type' } });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get('access-control-allow-origin'), extensionOrigin);
+    assert.equal(preflight.headers.get('access-control-allow-methods'), 'PUT');
+    for (const resource of ['/api/latest', '/api/auto-copy']) {
+      const read = await request(resource, { headers: { Origin: extensionOrigin } });
+      assert.equal(read.status, 200);
+      assert.equal(read.headers.get('access-control-allow-origin'), extensionOrigin);
+    }
     const response = await request('/api/auto-copy', { method: 'PUT', headers: { Origin: extensionOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: false }) });
     assert.equal(response.status, 200);
     assert.equal(autoCopyEnabled, false);
     const latest = await request('/api/latest').then((r) => r.json());
     const thumbnail = await request(latest.files[0].url, { headers: { Referer: `${extensionOrigin}/popup.html`, 'Sec-Fetch-Site': 'cross-site' } });
     assert.equal(thumbnail.status, 200);
+    const image = await request(latest.files[0].url, { headers: { Origin: extensionOrigin } });
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('access-control-allow-origin'), extensionOrigin);
     assert.equal((await request('/api/latest', { lan: true, headers: { Origin: extensionOrigin } })).status, 404);
   }
   assert.equal((await request('/api/batches', { headers: { Origin: origin, 'Sec-Fetch-Site': 'same-origin' } })).status, 200);
+});
+
+test('extension Origins and Referers cannot access management, uploads, or unsupported methods', async () => {
+  const before = await request('/api/batches').then((response) => response.json());
+  const id = before.batches[0].id;
+  const settingBefore = autoCopyEnabled;
+  const extensionOrigin = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+  const blocked = [
+    ['/api/batches', 'GET'], ['/api/batches', 'DELETE'],
+    [`/api/batches/${id}`, 'GET'], [`/api/batches/${id}`, 'DELETE'],
+    [`/api/batches/${id}/select`, 'POST'],
+    ['/api/server-status', 'GET'], ['/api/server-control', 'GET'], ['/api/server-shutdown', 'POST'],
+    ['/api/upload', 'POST'], ['/api/latest', 'PUT'], ['/api/latest', 'HEAD'],
+    ['/api/auto-copy', 'DELETE'], ['/files/photo.jpg', 'PUT'], ['/files/photo.jpg', 'HEAD'],
+    ['/', 'GET'], ['/api/latest/extra', 'GET'], ['/api/latest/', 'GET'],
+  ];
+  for (const [resource, method] of blocked) {
+    for (const headers of [{ Origin: extensionOrigin }, { Referer: `${extensionOrigin}/popup.html` }]) {
+      const response = await request(resource, { method, headers });
+      assert.equal(response.status, 403, `${method} ${resource}`);
+      assert.equal(response.headers.get('access-control-allow-origin'), null);
+    }
+    const preflight = await request(resource, {
+      method: 'OPTIONS', headers: { Origin: extensionOrigin, 'Access-Control-Request-Method': method },
+    });
+    assert.equal(preflight.status, 403, `preflight ${method} ${resource}`);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), null);
+    assert.equal(preflight.headers.get('access-control-allow-methods'), null);
+  }
+  assert.deepEqual(await request('/api/batches').then((response) => response.json()), before);
+  assert.equal(autoCopyEnabled, settingBefore);
+  assert.deepEqual(await fs.readdir(path.join(dataRoot, 'upload-tmp')), []);
 });
 
 const rawRequest = (pathname, headers = {}) => new Promise((resolve, reject) => {

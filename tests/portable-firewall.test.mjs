@@ -45,11 +45,30 @@ test('portable cleanup removes each existing rule, verifies deletion, and logs e
   });
 
   assert.match(script, /foreach \(\$ruleName in @\(\$tcpRule, \$mdnsRule\)\)/);
+  assert.match(script, /CmdletizationQuery_NotFound_DisplayName,Get-NetFirewallRule\*/);
+  assert.match(script, /if \(\$_\.FullyQualifiedErrorId -like 'CmdletizationQuery_NotFound_DisplayName,Get-NetFirewallRule\*'\) \{ return @\(\) \}/);
+  assert.match(script, /\$matches = @\(& \$getRules \$ruleName\)/);
   assert.match(script, /if \(\$matches\.Count -eq 0\) \{ continue \}/);
+  assert.match(script, /if \(@\(& \$getRules \$ruleName\)\.Count -ne 0\) \{ throw "Rule remains after deletion: \$ruleName" \}/);
   assert.match(script, /Rule remains after deletion: \$ruleName/);
   assert.match(script, /portable firewall exit cleanup failed:/);
   assert.match(script, /Add-Content -LiteralPath \$cleanupLog/);
   assert.match(script, /\$cleanupLog = 'C:\\Users\\Ažbe\\AppData\\Roaming\\SnapOverLAN\\portable-firewall\.log'/);
+});
+
+test('portable cleanup treats only the expected missing-rule query as an absent rule', () => {
+  const script = createPortableFirewallScript({
+    executablePath: 'C:\\Temp\\SnapOverLAN.exe',
+    processId: 4242,
+    statusPath: 'C:\\Temp\\firewall.status',
+    cleanupLogPath: 'C:\\Temp\\portable-firewall.log',
+  });
+
+  assert.match(script, /return @\(Get-NetFirewallRule -DisplayName \$ruleName -ErrorAction Stop\)/);
+  assert.match(script, /CmdletizationQuery_NotFound_DisplayName,Get-NetFirewallRule\*/);
+  assert.match(script, /    throw\r\n  \}/);
+  assert.doesNotMatch(script, /Get-NetFirewallRule[^\r\n]*SilentlyContinue/);
+  assert.doesNotMatch(script, /Remove-NetFirewallRule[^\r\n]*SilentlyContinue/);
 });
 
 test('portable executable short paths are resolved with the Windows long-path API', () => {

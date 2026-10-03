@@ -54,7 +54,7 @@ export const createPortableFirewallScript = ({ executablePath, processId, status
     '      Remove-NetFirewallRule -DisplayName $ruleName -Confirm:$false -ErrorAction Stop',
     '      if (@(& $getRules $ruleName).Count -ne 0) { throw "Rule remains after deletion: $ruleName" }',
     '    } catch {',
-    '      $failures += "$ruleName: $($_.Exception.Message)"',
+    '      $failures += "${ruleName}: $($_.Exception.Message)"',
     '    }',
     '  }',
     '  if ($failures.Count -ne 0) { throw "Firewall rule cleanup ($phase) failed: $($failures -join \'; \')" }',

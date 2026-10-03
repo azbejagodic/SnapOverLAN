@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import {
@@ -69,6 +70,30 @@ test('portable cleanup treats only the expected missing-rule query as an absent 
   assert.match(script, /    throw\r\n  \}/);
   assert.doesNotMatch(script, /Get-NetFirewallRule[^\r\n]*SilentlyContinue/);
   assert.doesNotMatch(script, /Remove-NetFirewallRule[^\r\n]*SilentlyContinue/);
+});
+
+test('generated portable firewall PowerShell parses without interpolation errors', { skip: process.platform !== 'win32' }, () => {
+  const script = createPortableFirewallScript({
+    executablePath: 'C:\\Temp\\SnapOverLAN.exe',
+    processId: 4242,
+    statusPath: 'C:\\Temp\\firewall.status',
+    cleanupLogPath: 'C:\\Temp\\portable-firewall.log',
+  });
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+  const parserCommand = [
+    `$script = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('${encodedScript}'))`,
+    '$tokens = $null',
+    '$errors = $null',
+    '[System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors) | Out-Null',
+    'if ($errors.Count -ne 0) { $errors | ForEach-Object { $_.Message }; exit 1 }',
+  ].join('; ');
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parserCommand], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(script, /\$failures \+= "\$\{ruleName\}: \$\(\$_\.Exception\.Message\)"/);
+  assert.doesNotMatch(script, /\$[A-Za-z_][A-Za-z0-9_]*:/);
 });
 
 test('portable executable short paths are resolved with the Windows long-path API', () => {

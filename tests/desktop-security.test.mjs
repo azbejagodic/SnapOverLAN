@@ -22,6 +22,8 @@ const createIpcHarness = () => {
     getServerStatePayload: () => { calls.push(['state']); return state; },
     rendererServerRequest: async (...args) => { calls.push(['request', ...args]); return response; },
     startServer: async () => { calls.push(['start']); return state; },
+    getWindowsNetworkProfile: async (address) => { calls.push(['profile', address]); return 'Public'; },
+    openWindowsNetworkSettings: async () => { calls.push(['network-settings']); return true; },
     backgroundMode: false,
     setBackgroundMode: async (enabled) => {
       calls.push(['background', enabled]);
@@ -45,6 +47,8 @@ const channels = [
   ['server:get-state', [], (harness) => harness.state, [['state']]],
   ['server:request', ['/api/batches', 'GET'], (harness) => harness.response, [['request', '/api/batches', 'GET']]],
   ['server:retry', [], (harness) => harness.state, [['start']]],
+  ['network:get-profile', ['192.168.1.20'], () => 'Public', [['profile', '192.168.1.20']]],
+  ['network:open-settings', [], () => true, [['network-settings']]],
   ['background:get', [], () => false, []],
   ['background:set', [true], () => true, [['background', true]]],
   ['batch:download', ['batch_test'], (harness) => harness.download,

@@ -38,8 +38,12 @@ class Element {
   click() { return this.listeners.get('click')?.({ target: this }); }
 }
 
-const createHarness = async (initialStatus = status()) => {
+const createHarness = async (initialStatus = status(), initialProfile = 'Private') => {
   let response = initialStatus;
+  let profile = initialProfile;
+  let settingsResult = true;
+  let settingsOpened = 0;
+  const profileRequests = [];
   let stateListener;
   let interval;
   const requests = [];
@@ -50,6 +54,7 @@ const createHarness = async (initialStatus = status()) => {
     'phoneUrl', 'phoneQr', 'qrFallback', 'batchMessage', 'batchesList',
     'downloadCurrentBatchBtn', 'clearBatchesBtn', 'qrModal', 'closeQrBtn',
     'diagnosticsSummary', 'diagnosticsList', 'diagnosticsWarning', 'diagnosticsUrls', 'diagnosticsPanel',
+    'publicNetworkWarning', 'openNetworkSettingsBtn', 'networkSettingsMessage',
   ].map((id) => [id, new Element()]));
   const navigator = {};
   Object.defineProperty(navigator, 'onLine', {
@@ -74,6 +79,16 @@ const createHarness = async (initialStatus = status()) => {
       snapOverLAN: {
         getServerState: async () => ({ state: 'online' }),
         getBackgroundMode: async () => false,
+        getNetworkProfile: async (address) => {
+          profileRequests.push(address);
+          if (profile instanceof Error) throw profile;
+          return profile;
+        },
+        openNetworkSettings: async () => {
+          settingsOpened += 1;
+          if (settingsResult instanceof Error) throw settingsResult;
+          return settingsResult;
+        },
         onDesktopStateChanged: (listener) => { stateListener = listener; },
         downloadBatch: async (id) => { downloads.push(id); },
       },
@@ -91,7 +106,10 @@ const createHarness = async (initialStatus = status()) => {
   });
   await flush();
   return {
-    elements, qrValues, requests, downloads, renderer,
+    elements, qrValues, requests, downloads, renderer, profileRequests,
+    setProfile: (value) => { profile = value; },
+    setSettingsResult: (value) => { settingsResult = value; },
+    getSettingsOpened: () => settingsOpened,
     setResponse: (value) => { response = value; },
     refresh: () => interval(),
     emitServerState: (state) => stateListener({ server: { state }, backgroundMode: false }),
@@ -292,4 +310,76 @@ test('diagnostics clears stale links on failure and restores current links after
   assert.equal(h.elements.diagnosticsSummary.textContent, 'Server online');
   assert.equal(h.elements.diagnosticsUrls.hidden, false);
   assert.deepEqual(links(), [newUrl]);
+});
+
+test('Public profile shows a phone-access warning while the server stays online and QR stays available', async () => {
+  const h = await createHarness(status([lanUrl, 'http://10.0.0.50:8787']), 'Public');
+  assert.equal(h.elements.publicNetworkWarning.hidden, false);
+  assert.equal(h.elements.connectionPill.textContent, 'Server online');
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Server online');
+  assert.equal(h.elements.qrBtn.disabled, false);
+  assert.equal(h.elements.backgroundToggleBtn.disabled, false);
+  assert.deepEqual(h.profileRequests, ['192.168.1.20']);
+  assert.equal(h.elements.phoneUrl.textContent, stableUrl);
+  const markup = await readFile(new URL('../app/renderer/index.html', import.meta.url), 'utf8');
+  assert.match(markup, /Phone access is blocked because this Windows network is set to Public/);
+  assert.match(markup, /If you trust this home or private network/);
+  assert.match(markup, /Keep Public on shared or untrusted networks/);
+});
+
+for (const profile of ['Private', 'DomainAuthenticated', null, new Error('detection failed')]) {
+  test(`${String(profile)} profile does not show a misleading Public warning`, async () => {
+    const h = await createHarness(status(), profile);
+    assert.equal(h.elements.publicNetworkWarning.hidden, true);
+    assert.equal(h.elements.connectionPill.textContent, 'Server online');
+  });
+}
+
+test('automatic refresh updates profile changes, detection failure, disconnects, and the reconnected LAN address', async () => {
+  const h = await createHarness(status(), 'Public');
+  h.setProfile('Private');
+  await h.refresh();
+  assert.equal(h.elements.publicNetworkWarning.hidden, true);
+  h.setProfile('Public');
+  await h.refresh();
+  assert.equal(h.elements.publicNetworkWarning.hidden, false);
+  h.setProfile(new Error('query timed out'));
+  await h.refresh();
+  assert.equal(h.elements.publicNetworkWarning.hidden, true);
+  h.setResponse(status([]));
+  const count = h.profileRequests.length;
+  await h.refresh();
+  assert.equal(h.profileRequests.length, count);
+  assert.equal(h.elements.publicNetworkWarning.hidden, true);
+  h.setProfile('Public');
+  h.setResponse(status(['http://10.0.0.50:8787']));
+  await h.refresh();
+  assert.equal(h.profileRequests.at(-1), '10.0.0.50');
+  assert.equal(h.elements.publicNetworkWarning.hidden, false);
+  assert.equal(h.elements.connectionPill.textContent, 'Server online');
+});
+
+test('a pending profile result cannot restore the warning after a desktop server failure', async () => {
+  const h = await createHarness();
+  let resolveProfile;
+  h.setProfile(new Promise((resolve) => { resolveProfile = resolve; }));
+  const refreshing = h.refresh();
+  await flush();
+  h.emitServerState('error');
+  resolveProfile('Public');
+  await refreshing;
+  assert.equal(h.elements.publicNetworkWarning.hidden, true);
+  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+});
+
+test('network settings button opens settings and gives manual guidance if Windows cannot open it', async () => {
+  const h = await createHarness(status(), 'Public');
+  await h.elements.openNetworkSettingsBtn.click();
+  assert.equal(h.getSettingsOpened(), 1);
+  assert.equal(h.elements.networkSettingsMessage.hidden, true);
+  h.setSettingsResult(new Error('settings unavailable'));
+  await h.elements.openNetworkSettingsBtn.click();
+  assert.equal(h.elements.openNetworkSettingsBtn.disabled, false);
+  assert.equal(h.elements.networkSettingsMessage.hidden, false);
+  assert.match(h.elements.networkSettingsMessage.textContent, /Windows Settings > Network & internet/);
 });

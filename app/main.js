@@ -25,6 +25,7 @@ import { createRendererServerClient } from './desktop/renderer-server-client.js'
 import { createUpdateDialogController } from './desktop/update-dialog-controller.js';
 import { createElectronUpdateManager } from './desktop/update-manager.js';
 import { configurePortableFirewall } from './desktop/portable-firewall.js';
+import { getWindowsNetworkProfile, openWindowsNetworkSettings } from './desktop/windows-network-profile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -391,6 +392,14 @@ ipcMain.handle('server:request', (event, resourcePath, method) => {
 ipcMain.handle('server:retry', (event) => {
   assertMainWindowFrame(event);
   return handleServerControl(() => startServer());
+});
+ipcMain.handle('network:get-profile', (event, address) => {
+  assertMainWindowFrame(event);
+  return getWindowsNetworkProfile(address);
+});
+ipcMain.handle('network:open-settings', (event) => {
+  assertMainWindowFrame(event);
+  return openWindowsNetworkSettings({ shell });
 });
 ipcMain.handle('background:get', (event) => {
   assertMainWindowFrame(event);

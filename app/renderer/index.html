@@ -14,6 +14,7 @@
         <span>SnapOverLAN</span>
       </span>
     </div>
+    <div class="desktop-header">
     <header class="title-row">
       <div class="server-controls">
         <p id="connectionPill" class="server-line checking" aria-live="polite">
@@ -28,6 +29,13 @@
         <button id="refreshBtn" class="header-button refresh-button" type="button">Refresh</button>
       </div>
     </header>
+    <section id="publicNetworkWarning" class="network-warning" role="status" aria-live="polite" hidden>
+      <p><strong>Phone access is blocked because this Windows network is set to Public.</strong></p>
+      <p>SnapOverLAN allows phone access on Private networks only. If you trust this home or private network, open its Wi-Fi or Ethernet properties in Windows Settings and change the network profile to Private. Keep Public on shared or untrusted networks.</p>
+      <button id="openNetworkSettingsBtn" class="header-button" type="button">Open network settings</button>
+      <p id="networkSettingsMessage" hidden></p>
+    </section>
+    </div>
 
     <section class="main-grid" aria-label="Recent batches">
       <article class="panel batches-workspace" aria-labelledby="batchesTitle">

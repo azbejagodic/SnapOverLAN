@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('snapOverLAN', Object.freeze({
   serverRequest: (resourcePath, method = 'GET') => ipcRenderer.invoke('server:request', resourcePath, method),
   getServerState: () => ipcRenderer.invoke('server:get-state'),
   retryServer: () => ipcRenderer.invoke('server:retry'),
+  getNetworkProfile: (address) => ipcRenderer.invoke('network:get-profile', address),
+  openNetworkSettings: () => ipcRenderer.invoke('network:open-settings'),
   getBackgroundMode: () => ipcRenderer.invoke('background:get'),
   setBackgroundMode: (enabled) => ipcRenderer.invoke('background:set', Boolean(enabled)),
   downloadBatch: (batchId) => {

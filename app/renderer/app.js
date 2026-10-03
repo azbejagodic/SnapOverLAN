@@ -22,6 +22,9 @@ const diagnosticsWarning = document.getElementById('diagnosticsWarning');
 const diagnosticsUrls = document.getElementById('diagnosticsUrls');
 const qrModal = document.getElementById('qrModal');
 const closeQrBtn = document.getElementById('closeQrBtn');
+const publicNetworkWarning = document.getElementById('publicNetworkWarning');
+const openNetworkSettingsBtn = document.getElementById('openNetworkSettingsBtn');
+const networkSettingsMessage = document.getElementById('networkSettingsMessage');
 
 const AUTO_REFRESH_MS = 5000;
 const AUTO_COPY_MESSAGE_MS = 4000;
@@ -36,6 +39,31 @@ let desktopServerState = 'offline';
 let serverRetryOperation = null;
 let backgroundModeEnabled = false;
 let autoCopyMessageTimer = null;
+let networkProfileRequestId = 0;
+let networkProfileAddress = '';
+
+function clearNetworkProfileWarning() {
+  networkProfileRequestId += 1;
+  networkProfileAddress = '';
+  if (publicNetworkWarning) publicNetworkWarning.hidden = true;
+  if (networkSettingsMessage) networkSettingsMessage.hidden = true;
+}
+
+async function refreshNetworkProfile(data) {
+  const address = parseUrl(choosePhoneUrl({ urls: data.lanUrls, primaryUrl: data.primaryLanUrl })?.url)?.hostname;
+  if (!address || typeof window.snapOverLAN?.getNetworkProfile !== 'function') {
+    clearNetworkProfileWarning();
+    return;
+  }
+  if (address !== networkProfileAddress) clearNetworkProfileWarning();
+  networkProfileAddress = address;
+  const requestId = ++networkProfileRequestId;
+  let profile = null;
+  try { profile = await window.snapOverLAN.getNetworkProfile(address); } catch {}
+  // A result from a disconnected/replaced network must not restore a stale warning.
+  if (requestId !== networkProfileRequestId) return;
+  if (publicNetworkWarning) publicNetworkWarning.hidden = profile !== 'Public';
+}
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return 'Unknown size';
@@ -273,6 +301,7 @@ function renderQrCode(phoneUrl) {
 }
 
 function renderPhoneSetup(data) {
+  if (!data) clearNetworkProfileWarning();
   // A retained mDNS name alone does not prove that a LAN interface is available.
   lanAvailable = Boolean(choosePhoneUrl(data));
   const stableUrl = isUsablePhoneUrl(data?.stableUrl) && lanAvailable ? data.stableUrl : '';
@@ -315,6 +344,7 @@ async function loadServerStatus({ showActivity = false } = {}) {
     }
     renderStatus({ state: 'online' });
     renderDiagnostics(status);
+    await refreshNetworkProfile(status);
     return status;
   } catch (error) {
     lastServerStatusData = null;
@@ -378,6 +408,18 @@ batchHistory = createBatchHistory({
 batchHistory.bind();
 
 refreshBtn.addEventListener('click', () => refreshDashboard({ source: 'manual' }));
+
+openNetworkSettingsBtn?.addEventListener('click', async () => {
+  if (typeof window.snapOverLAN?.openNetworkSettings !== 'function') return;
+  openNetworkSettingsBtn.disabled = true;
+  let opened = false;
+  try { opened = await window.snapOverLAN.openNetworkSettings(); } catch {}
+  if (networkSettingsMessage) {
+    networkSettingsMessage.textContent = opened ? '' : 'Could not open settings. Open Windows Settings > Network & internet, then select your Wi-Fi or Ethernet properties.';
+    networkSettingsMessage.hidden = opened;
+  }
+  openNetworkSettingsBtn.disabled = false;
+});
 
 retryServerBtn?.addEventListener('click', async () => {
   if (!window.snapOverLAN || serverRetryOperation) return;

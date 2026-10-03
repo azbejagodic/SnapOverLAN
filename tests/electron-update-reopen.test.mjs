@@ -155,6 +155,7 @@ const createHarness = ({
       load: async () => ({ backgroundMode: true }), save: async () => {},
     }),
     createAutoCopyController: () => ({}),
+    configurePortableFirewall: async () => ({ configured: false, reason: 'not-portable-windows' }),
     createServerManager: (options) => {
       serverOptions = options;
       return {

@@ -19,19 +19,36 @@ export const isPortableWindowsRuntime = ({
   && Boolean(env.PORTABLE_EXECUTABLE_FILE || env.PORTABLE_EXECUTABLE_DIR)
 );
 
-export const createPortableFirewallScript = ({ executablePath, processId, statusPath }) => {
+export const createPortableFirewallScript = ({ executablePath, processId, statusPath, cleanupLogPath }) => {
   const tcpRule = quotePowerShell(TCP_RULE);
   const mdnsRule = quotePowerShell(MDNS_RULE);
   const sourceProgram = quotePowerShell(executablePath);
   const status = quotePowerShell(statusPath);
+  const cleanupLog = quotePowerShell(cleanupLogPath);
 
   return [
     "$ErrorActionPreference = 'Stop'",
     `$tcpRule = ${tcpRule}`,
     `$mdnsRule = ${mdnsRule}`,
+    `$cleanupLog = ${cleanupLog}`,
+    '$writeCleanupDiagnostic = {',
+    '  param([string]$message)',
+    '  try { Add-Content -LiteralPath $cleanupLog -Value "$(Get-Date -Format o) $message" -Encoding UTF8 -ErrorAction Stop } catch {}',
+    '}',
     '$removeRules = {',
-    '  Get-NetFirewallRule -DisplayName $tcpRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue',
-    '  Get-NetFirewallRule -DisplayName $mdnsRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue',
+    '  param([string]$phase)',
+    '  $failures = @()',
+    '  foreach ($ruleName in @($tcpRule, $mdnsRule)) {',
+    '    try {',
+    '      $matches = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop)',
+    '      if ($matches.Count -eq 0) { continue }',
+    '      Remove-NetFirewallRule -DisplayName $ruleName -Confirm:$false -ErrorAction Stop',
+    '      if (@(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop).Count -ne 0) { throw "Rule remains after deletion: $ruleName" }',
+    '    } catch {',
+    '      $failures += "$ruleName: $($_.Exception.Message)"',
+    '    }',
+    '  }',
+    '  if ($failures.Count -ne 0) { throw "Firewall rule cleanup ($phase) failed: $($failures -join \'; \')" }',
     '}',
     'try {',
     "  Add-Type -TypeDefinition @'",
@@ -51,15 +68,20 @@ export const createPortableFirewallScript = ({ executablePath, processId, status
     '  }',
     "  if ($programLength -eq 0 -or $programLength -ge $programBuffer.Capacity) { throw 'Could not resolve the portable executable long path.' }",
     '  $program = $programBuffer.ToString()',
-    '  & $removeRules',
+    "  & $removeRules 'startup'",
     "  New-NetFirewallRule -DisplayName $tcpRule -Description 'allow phones on the same private LAN to reach portable SnapOverLAN on port 8787' -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol TCP -LocalPort 8787 -RemoteAddress LocalSubnet -Program $program | Out-Null",
     "  New-NetFirewallRule -DisplayName $mdnsRule -Description 'allow local devices to discover portable SnapOverLAN over mDNS' -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol UDP -LocalPort 5353 -RemoteAddress LocalSubnet -Program $program | Out-Null",
     `  Set-Content -LiteralPath ${status} -Value 'ready' -Encoding Ascii`,
-    `  Wait-Process -Id ${processId} -ErrorAction SilentlyContinue`,
+    `  Wait-Process -Id ${processId} -ErrorAction Stop`,
     '} catch {',
+    "  & $writeCleanupDiagnostic \"portable firewall setup failed: $($_.Exception.Message)\"",
     `  Set-Content -LiteralPath ${status} -Value 'failed' -Encoding Ascii -ErrorAction SilentlyContinue`,
     '} finally {',
-    '  & $removeRules',
+    '  try {',
+    "    & $removeRules 'exit'",
+    '  } catch {',
+    "    & $writeCleanupDiagnostic \"portable firewall exit cleanup failed: $($_.Exception.Message)\"",
+    '  }',
     '}',
   ].join('\r\n');
 };
@@ -108,7 +130,8 @@ export async function configurePortableFirewall({
   }
 
   const statusPath = path.join(electronApp.getPath('temp'), `snapoverlan-firewall-${randomUUID()}.status`);
-  const script = createPortableFirewallScript({ executablePath, processId, statusPath });
+  const cleanupLogPath = path.join(electronApp.getPath('userData'), 'portable-firewall.log');
+  const script = createPortableFirewallScript({ executablePath, processId, statusPath, cleanupLogPath });
   const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
   const elevateCommand = [
     'Start-Process',

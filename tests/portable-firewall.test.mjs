@@ -21,6 +21,7 @@ test('portable rules remain program-bound, private-profile, and local-subnet onl
     executablePath: "C:\\Temp\\Snap's App\\SnapOverLAN.exe",
     processId: 4242,
     statusPath: 'C:\\Temp\\firewall.status',
+    cleanupLogPath: 'C:\\Temp\\portable-firewall.log',
   });
 
   for (const rule of Object.values(PORTABLE_FIREWALL_RULES)) assert.match(script, new RegExp(rule));
@@ -28,9 +29,27 @@ test('portable rules remain program-bound, private-profile, and local-subnet onl
   assert.match(script, /-Protocol UDP -LocalPort 5353 -RemoteAddress LocalSubnet -Program \$program/);
   assert.equal((script.match(/-Profile Private/g) || []).length, 2);
   assert.doesNotMatch(script, /Profile (?:Public|Any)|RemoteAddress Any/);
-  assert.match(script, /Wait-Process -Id 4242/);
-  assert.match(script, /finally \{\r\n  & \$removeRules/);
-  assert.ok(script.indexOf('& $removeRules') < script.indexOf('New-NetFirewallRule'));
+  assert.match(script, /Wait-Process -Id 4242 -ErrorAction Stop/);
+  assert.match(script, /Remove-NetFirewallRule -DisplayName \$ruleName -Confirm:\$false -ErrorAction Stop/);
+  assert.doesNotMatch(script, /(?:Get|Remove)-NetFirewallRule[^\r\n]*SilentlyContinue/);
+  assert.match(script, /finally \{\r\n  try \{\r\n    & \$removeRules 'exit'/);
+  assert.ok(script.indexOf("& $removeRules 'startup'") < script.indexOf('New-NetFirewallRule'));
+});
+
+test('portable cleanup removes each existing rule, verifies deletion, and logs exit failures', () => {
+  const script = createPortableFirewallScript({
+    executablePath: 'C:\\Temp\\SnapOverLAN.exe',
+    processId: 4242,
+    statusPath: 'C:\\Temp\\firewall.status',
+    cleanupLogPath: 'C:\\Users\\Ažbe\\AppData\\Roaming\\SnapOverLAN\\portable-firewall.log',
+  });
+
+  assert.match(script, /foreach \(\$ruleName in @\(\$tcpRule, \$mdnsRule\)\)/);
+  assert.match(script, /if \(\$matches\.Count -eq 0\) \{ continue \}/);
+  assert.match(script, /Rule remains after deletion: \$ruleName/);
+  assert.match(script, /portable firewall exit cleanup failed:/);
+  assert.match(script, /Add-Content -LiteralPath \$cleanupLog/);
+  assert.match(script, /\$cleanupLog = 'C:\\Users\\Ažbe\\AppData\\Roaming\\SnapOverLAN\\portable-firewall\.log'/);
 });
 
 test('portable executable short paths are resolved with the Windows long-path API', () => {
@@ -38,6 +57,7 @@ test('portable executable short paths are resolved with the Windows long-path AP
     executablePath: 'C:\\Users\\AZBE~1\\AppData\\Local\\Temp\\BUILD~1\\SnapOverLAN.exe',
     processId: 4242,
     statusPath: 'C:\\Users\\Ažbe\\AppData\\Local\\Temp\\firewall.status',
+    cleanupLogPath: 'C:\\Users\\Ažbe\\AppData\\Roaming\\SnapOverLAN\\portable-firewall.log',
   });
 
   assert.match(script, /EntryPoint = "GetLongPathNameW"/);

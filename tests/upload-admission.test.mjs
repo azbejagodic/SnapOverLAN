@@ -24,10 +24,11 @@ after(async () => {
   assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep));
   await fs.rm(root, { recursive: true, force: true });
 });
-const send = async () => {
+const send = async (sessionId) => {
   const form = new FormData();
   form.append('photos', new Blob([await imageFixture('image/png')], { type: 'image/png' }), 'phone.png');
-  return fetch(`http://127.0.0.1:${server.address().port}/api/upload`, { method: 'POST', body: form });
+  return fetch(`http://127.0.0.1:${server.address().port}/api/upload`, { method: 'POST', body: form,
+    headers: sessionId ? { 'x-snapoverlan-send-session': sessionId } : {} });
 };
 const mockSpace = (t, bytes = MIN_UPLOAD_FREE_BYTES) => t.mock.method(fs, 'statfs', async (target, options) => {
   assert.equal(target, UPLOAD_TEMP_DIR);
@@ -108,5 +109,36 @@ for (const code of ['ENOSPC', 'EDQUOT', 'EACCES']) {
     assert.deepEqual(await listBatches(), before);
     rename.mock.restore();
     await assertSuccess();
+  });
+}
+
+for (const fails of [false, true]) {
+  test(`session-associated upload ${fails ? 'failure' : 'success'} clears protection after guarded admission`, async (t) => {
+    const base = `http://127.0.0.1:${server.address().port}/api`;
+    const begun = await fetch(`${base}/send-session`, { method: 'POST' });
+    const { sessionId } = await begun.json();
+    assert.equal(begun.status, 200);
+    assert.equal(uploadLifecycle.status.activeSendSessions, 1);
+    assert.equal(uploadLifecycle.beginDrain({ onlyIfIdle: true }), null);
+    const renewed = await fetch(`${base}/send-session/${sessionId}/renew`, { method: 'POST' });
+    assert.equal(renewed.status, 200);
+    const check = t.mock.method(fs, 'statfs', async () => {
+      assert.equal(uploadLifecycle.status.activeSendSessions, 0);
+      assert.equal(uploadLifecycle.status.activeUploads, 1);
+      assert.equal(uploadLifecycle.beginDrain({ onlyIfIdle: true }), null);
+      return { bavail: BigInt(fails ? 0 : MIN_UPLOAD_FREE_BYTES), bsize: 1n };
+    });
+    const response = await send(sessionId);
+    assert.equal(response.status, fails ? 507 : 200);
+    await response.json();
+    assert.equal(check.mock.callCount(), 1);
+    assert.equal(uploadLifecycle.status.uploadInProgress, false);
+    assert.equal(uploadLifecycle.status.activeSendSessions, 0);
+    const ended = await fetch(`${base}/send-session/${sessionId}/end`, { method: 'POST' });
+    assert.equal(ended.status, 200);
+    check.mock.restore();
+    const replay = await send(sessionId);
+    assert.equal(replay.status, 410);
+    assert.equal(uploadLifecycle.status.uploadInProgress, false);
   });
 }

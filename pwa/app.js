@@ -14,6 +14,7 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set([
 const cameraInput = document.getElementById('cameraInput');
 const galleryInput = document.getElementById('galleryInput');
 const uploadBtn = document.getElementById('uploadBtn');
+const cancelSendBtn = document.getElementById('cancelSendBtn');
 const statusEl = document.getElementById('status');
 const fastUploadToggle = document.getElementById('fastUploadToggle');
 const fastUploadState = document.getElementById('fastUploadState');
@@ -25,6 +26,75 @@ const selectedCount = document.getElementById('selectedCount');
 // File inputs expose a transient, read-only FileList, so this array is the tray's source of truth.
 let selectedFiles = [];
 let isUploading = false;
+let activeSendOperation = null;
+const SEND_SESSION_HEARTBEAT_MS = 10000;
+const SEND_SESSION_REQUEST_TIMEOUT_MS = 10000;
+
+function checkSendOperation(operation) {
+  if (operation.controller.signal.aborted) throw new Error('Send stopped.');
+}
+
+async function sendSessionRequest(path, operation) {
+  checkSendOperation(operation);
+  const timeout = window.setTimeout(() => operation.controller.abort(), SEND_SESSION_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(path, { method: 'POST', signal: operation.controller.signal, cache: 'no-store' });
+    if (!response.ok) {
+      if ([429, 503, 410].includes(response.status)) operation.failureMessage = await getUploadErrorMessage(response);
+      throw new Error('Send session request failed.');
+    }
+    return await response.json();
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function scheduleSendHeartbeat(operation) {
+  operation.heartbeatTimer = window.setTimeout(() => {
+    operation.heartbeatRequest = sendSessionRequest(`/api/send-session/${operation.sessionId}/renew`, operation)
+      .then(() => { if (!operation.controller.signal.aborted) scheduleSendHeartbeat(operation); })
+      .catch(() => { operation.controller.abort(); });
+  }, SEND_SESSION_HEARTBEAT_MS);
+}
+
+function endPhoneSendSession(operation) {
+  window.clearTimeout(operation.heartbeatTimer);
+  if (!operation.sessionId) return Promise.resolve();
+  if (operation.endPromise) return operation.endPromise;
+  // Cancellation uses its own signal so aborting upload/preparation does not
+  // abort lease cleanup. If delivery fails, the server still expires the lease.
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 3000);
+  operation.endPromise = fetch(`/api/send-session/${operation.sessionId}/end`, {
+    method: 'POST', keepalive: true, signal: controller.signal, cache: 'no-store',
+  }).catch(() => {}).finally(() => window.clearTimeout(timeout));
+  return operation.endPromise;
+}
+
+function cancelPhoneSend() {
+  const operation = activeSendOperation;
+  if (!operation) return;
+  operation.failureMessage = 'Send cancelled. Your selected files are still available.';
+  operation.controller.abort();
+  void endPhoneSendSession(operation);
+}
+
+async function prepareProtectedBatch(files, operation) {
+  let onAbort;
+  const interrupted = new Promise((_resolve, reject) => {
+    onAbort = () => reject(new Error('Send stopped.'));
+    operation.controller.signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    checkSendOperation(operation);
+    return await Promise.race([prepareUploadBatch(files, operation), interrupted]);
+  } finally {
+    operation.controller.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+cancelSendBtn?.addEventListener('click', cancelPhoneSend);
+window.addEventListener?.('pagehide', cancelPhoneSend);
 
 function clearPressedInputButtons() {
   inputButtons.forEach((button) => button.classList.remove('is-pressed'));
@@ -212,11 +282,13 @@ async function optimizeImageWithFallback(file) {
   }
 }
 
-async function prepareUploadBatch(files) {
+async function prepareUploadBatch(files, operation = null) {
   const preparedFiles = [];
   for (const file of files) {
+    if (operation) checkSendOperation(operation);
     // Sequential processing keeps peak memory bounded for a full 10-photo tray.
     preparedFiles.push(await optimizeImageWithFallback(file));
+    if (operation) checkSendOperation(operation);
   }
   return preparedFiles;
 }
@@ -314,6 +386,7 @@ async function getUploadErrorMessage(response) {
   if (response.status === 429) return 'Another upload is in progress. Try again shortly.';
   if (response.status === 507) return 'The PC needs more free disk space.';
   if (response.status === 503) return 'SnapOverLAN is shutting down. Try again after reopening it.';
+  if (response.status === 410) return 'Send session expired. Press Upload again.';
   if (response.status >= 500 && response.status < 600) return 'SnapOverLAN could not complete the upload. Try again.';
   if (response.status >= 400 && response.status < 500) {
     switch (error) {
@@ -355,6 +428,7 @@ async function getUploadErrorMessage(response) {
 }
 
 uploadBtn.addEventListener('click', async () => {
+  if (isUploading) return;
   if (selectedFiles.length === 0) {
     setStatus('Add at least one photo before upload.', 'error');
     return;
@@ -362,15 +436,37 @@ uploadBtn.addEventListener('click', async () => {
 
   isUploading = true;
   updateSelectedCount();
-  let failureMessage = 'Upload failed. Your selected files are still available.';
+  const operation = {
+    controller: new AbortController(), sessionId: '', heartbeatTimer: null, heartbeatRequest: null,
+    failureMessage: 'Could not start a protected send session. Check the connection to your PC and try again.',
+  };
+  activeSendOperation = operation;
+  if (cancelSendBtn) cancelSendBtn.hidden = false;
 
   try {
     const uploadFiles = selectedFiles.slice();
+    setStatus('Starting send...');
+    const session = await sendSessionRequest('/api/send-session', operation);
+    if (typeof session?.sessionId !== 'string' || !/^[a-f0-9]{64}$/.test(session.sessionId)) {
+      throw new Error('Invalid send session acknowledgement.');
+    }
+    operation.sessionId = session.sessionId;
+    checkSendOperation(operation);
+    operation.failureMessage = 'Send interrupted. Check the connection to your PC and press Upload again.';
+    scheduleSendHeartbeat(operation);
     let preparedFiles = uploadFiles;
     if (fastUploadEnabled && uploadFiles.some(shouldOptimizeImage)) {
       setStatus('Optimizing photos...');
-      preparedFiles = await prepareUploadBatch(uploadFiles);
+      preparedFiles = await prepareProtectedBatch(uploadFiles, operation);
     }
+
+    // Confirm the preparation lease is still valid before transmitting. Stop
+    // heartbeats here: upload admission transfers it to the actual-upload guard.
+    window.clearTimeout(operation.heartbeatTimer);
+    await operation.heartbeatRequest;
+    window.clearTimeout(operation.heartbeatTimer);
+    await sendSessionRequest(`/api/send-session/${operation.sessionId}/renew`, operation);
+    checkSendOperation(operation);
 
     setStatus('Uploading...');
     const formData = new FormData();
@@ -381,26 +477,31 @@ uploadBtn.addEventListener('click', async () => {
       response = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
+        headers: { 'x-snapoverlan-send-session': operation.sessionId },
+        signal: operation.controller.signal,
       });
     } catch (error) {
-      failureMessage = 'Upload interrupted. Check your Wi-Fi connection and try again.';
+      if (!operation.controller.signal.aborted) operation.failureMessage = 'Upload interrupted. Check your Wi-Fi connection and try again.';
       throw error;
     }
 
     if (!response.ok) {
-      failureMessage = await getUploadErrorMessage(response);
+      operation.failureMessage = await getUploadErrorMessage(response);
       throw new Error(`Upload failed (${response.status})`);
     }
 
     const uploadedCount = uploadFiles.length;
     selectedFiles = [];
-    isUploading = false;
     renderSelectedTray();
-    updateSelectedCount();
     setStatus(`Uploaded ${uploadedCount} photo${uploadedCount > 1 ? 's' : ''}.`, 'success');
   } catch (error) {
+    setStatus(operation.failureMessage, 'error');
+  } finally {
+    operation.controller.abort();
+    await endPhoneSendSession(operation);
+    activeSendOperation = null;
     isUploading = false;
-    setStatus(failureMessage, 'error');
+    if (cancelSendBtn) cancelSendBtn.hidden = true;
     updateSelectedCount();
   }
 });

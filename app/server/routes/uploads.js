@@ -37,6 +37,18 @@ const createUploadsRouter = ({ onUploadCompleted = () => {} } = {}) => {
   const router = Router();
   const receiveFiles = upload.array('photos', MAX_FILES);
 
+  const sessionAction = (operation) => (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try { res.json(operation(req.params.sessionId)); }
+    catch (error) {
+      if (error.statusCode) res.status(error.statusCode).json({ error: error.message });
+      else next(error);
+    }
+  };
+  router.post('/send-session', sessionAction(uploadLifecycle.beginSendSession));
+  router.post('/send-session/:sessionId/renew', sessionAction(uploadLifecycle.renewSendSession));
+  router.post('/send-session/:sessionId/end', sessionAction(uploadLifecycle.endSendSession));
+
   router.post('/upload', markUploadStarted, (req, res, next) => {
     req.uploadProcessing = (async () => {
       try {

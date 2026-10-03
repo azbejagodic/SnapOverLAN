@@ -24,10 +24,19 @@ const beginUpload = (lifecycle) => {
 
 for (const installUpdate of [false, true]) {
   for (const transport of ['ipc', 'localhost']) {
-    test(`${installUpdate ? 'Restart & Update' : 'Quit'} via ${transport} blocks immediately, admits uploads, and retries current state`, async (t) => {
+    for (const phase of ['upload', 'preparation']) {
+    test(`${installUpdate ? 'Restart & Update' : 'Quit'} via ${transport} blocks during ${phase}, admits uploads, and retries current state`, async (t) => {
       t.mock.timers.enable({ apis: ['setTimeout'] });
       const lifecycle = createUploadLifecycle({ logger: { warn() { assert.fail('unexpected drain timer'); } } });
-      let upload = beginUpload(lifecycle);
+      let preparingSessionId;
+      const beginActivity = () => {
+        if (phase === 'upload') return beginUpload(lifecycle);
+        preparingSessionId = lifecycle.beginSendSession().sessionId;
+        const activity = new EventEmitter();
+        activity.once('finish', () => lifecycle.endSendSession(preparingSessionId));
+        return activity;
+      };
+      let upload = beginActivity();
       const events = [];
       const child = new EventEmitter();
       child.exitCode = null;
@@ -93,8 +102,11 @@ for (const installUpdate of [false, true]) {
         assert.equal(manager.getState().state, 'online');
         assert.equal(context.allowQuit, false);
         upload.emit('finish');
-        upload = beginUpload(lifecycle);
-        t.mock.timers.tick(120000);
+        upload = beginActivity();
+        for (let i = 0; i < 12; i += 1) {
+          t.mock.timers.tick(10000);
+          if (phase === 'preparation') lifecycle.renewSendSession(preparingSessionId);
+        }
         dismiss();
         assert.equal(await pending, installUpdate ? 'upload-blocked' : false);
         assert.equal(context.quitOperation, null);
@@ -106,6 +118,7 @@ for (const installUpdate of [false, true]) {
       assert.deepEqual(events, ['warning', 'warning', 'tray', installUpdate ? 'install' : 'quit']);
       assert.equal(lifecycle.status.draining, true);
     });
+    }
   }
 }
 

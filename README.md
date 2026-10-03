@@ -41,7 +41,7 @@ From [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases), dow
 
 ### Portable app
 
-Download `SnapOverLAN-<version>-portable-x64.exe` from the same release and run it directly. The portable build does not perform installer-time firewall configuration, so Windows Firewall access may need to be allowed separately.
+Download `SnapOverLAN-<version>-portable-x64.exe` from the same release and run it directly. Windows asks for administrator approval at launch so the portable app can add private-LAN-only firewall rules for its lifetime. The rules are removed when the app exits.
 
 ### Browser extension
 
@@ -176,7 +176,7 @@ The Setup installer creates two inbound Windows Firewall rules on the Private pr
 - `SnapOverLAN LAN Upload` — TCP port `8787`
 - `SnapOverLAN mDNS` — UDP port `5353`, restricted to the local subnet
 
-Both rules are removed during uninstall. The portable executable does not run this installer hook, so Windows Firewall access may need to be allowed separately.
+Both installed-build rules are removed during uninstall. The portable executable creates separate, program-bound rules with the same port, Private-profile, and local-subnet restrictions, then removes them when the portable app exits.
 
 If the phone cannot connect:
 
@@ -185,7 +185,7 @@ If the phone cannot connect:
 3. Use the `.local` or LAN IP address shown by the desktop app, not `localhost`.
 4. Try a listed direct-IP URL if `.local` resolution fails.
 5. Check guest Wi-Fi, access-point isolation, VPN routing, multicast filtering, and third-party firewall settings.
-6. Prefer the Setup installer when installer-managed firewall rules are desired.
+6. If using the portable build, approve its Windows administrator prompt so it can configure its launch-scoped firewall rules.
 
 ## Storage and upload history
 

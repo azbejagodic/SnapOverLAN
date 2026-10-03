@@ -24,6 +24,7 @@ import { createDesktopShell } from './desktop/shell.js';
 import { createRendererServerClient } from './desktop/renderer-server-client.js';
 import { createUpdateDialogController } from './desktop/update-dialog-controller.js';
 import { createElectronUpdateManager } from './desktop/update-manager.js';
+import { configurePortableFirewall } from './desktop/portable-firewall.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -432,6 +433,10 @@ if (!gotLock) {
 
   electronApp.whenReady().then(async () => {
     await loadSettings();
+    const portableFirewall = await configurePortableFirewall({ electronApp });
+    if (portableFirewall.reason === 'configuration-failed') {
+      console.warn('SnapOverLAN portable firewall configuration was not completed.');
+    }
     await startServer().catch((error) => {
       console.error('SnapOverLAN server startup failed:', error);
     });

@@ -118,7 +118,9 @@ const waitForStatus = ({ child, fsApi, statusPath, timeoutMs }) => new Promise((
   };
 
   child.once('error', () => finish(false));
-  child.once('exit', () => { void inspect().then(() => finish(false)); });
+  child.once('exit', (code) => {
+    if (code !== 0) finish(false);
+  });
   interval = setInterval(() => { void inspect(); }, 100);
   timeout = setTimeout(() => finish(false), timeoutMs);
   void inspect();
@@ -147,7 +149,6 @@ export async function configurePortableFirewall({
     "-FilePath 'powershell.exe'",
     `-ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${encodedScript}')`,
     '-Verb RunAs',
-    '-Wait',
   ].join(' ');
 
   let child;

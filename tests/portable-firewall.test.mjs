@@ -113,7 +113,7 @@ test('portable executable short paths are resolved with the Windows long-path AP
   assert.match(script, /Set-Content -LiteralPath 'C:\\Users\\Ažbe\\AppData\\Local\\Temp\\firewall\.status'/);
 });
 
-test('portable configuration elevates an encoded helper and waits for readiness', async () => {
+test('portable configuration detaches the elevated helper and waits for its readiness status', async () => {
   const child = new EventEmitter();
   child.unref = () => { child.unreferenced = true; };
   let launch;
@@ -145,10 +145,61 @@ test('portable configuration elevates an encoded helper and waits for readiness'
   assert.deepEqual(result, { configured: true, reason: 'configured' });
   assert.equal(launch.command, 'powershell.exe');
   assert.deepEqual(launch.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
-  assert.match(launch.args[3], /-Verb RunAs -Wait/);
+  assert.match(launch.args[3], /-Verb RunAs/);
+  assert.doesNotMatch(launch.args[3], /(?:^|\s)-Wait(?:\s|$)/);
   assert.match(launch.args[3], /-EncodedCommand/);
   assert.deepEqual(launch.options, { windowsHide: true, stdio: 'ignore' });
   assert.equal(child.unreferenced, true);
+});
+
+test('portable readiness survives the intermediate launcher exiting before the elevated helper is ready', async () => {
+  const child = new EventEmitter();
+  child.unref = () => {};
+  let reads = 0;
+  const fsApi = {
+    readFile: async () => {
+      reads += 1;
+      if (reads < 2) throw Object.assign(new Error('not ready'), { code: 'ENOENT' });
+      return 'ready';
+    },
+    rm: async () => {},
+  };
+
+  const configuration = configurePortableFirewall({
+    electronApp: { isPackaged: true, getPath: () => 'C:\\Temp' },
+    env: { PORTABLE_EXECUTABLE_FILE: 'D:\\Apps\\SnapOverLAN.exe' },
+    executablePath: 'C:\\Temp\\build-id\\SnapOverLAN.exe',
+    fsApi,
+    platform: 'win32',
+    processId: 99,
+    spawnImpl: () => child,
+    timeoutMs: 1_000,
+  });
+
+  child.emit('exit', 0);
+  assert.deepEqual(await configuration, { configured: true, reason: 'configured' });
+  assert.ok(reads >= 2);
+});
+
+test('portable configuration still fails promptly when the intermediate launcher fails', async () => {
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const fsApi = {
+    readFile: async () => { throw Object.assign(new Error('not ready'), { code: 'ENOENT' }); },
+    rm: async () => {},
+  };
+
+  const configuration = configurePortableFirewall({
+    electronApp: { isPackaged: true, getPath: () => 'C:\\Temp' },
+    env: { PORTABLE_EXECUTABLE_FILE: 'D:\\Apps\\SnapOverLAN.exe' },
+    fsApi,
+    platform: 'win32',
+    spawnImpl: () => child,
+    timeoutMs: 1_000,
+  });
+
+  child.emit('exit', 1);
+  assert.deepEqual(await configuration, { configured: false, reason: 'configuration-failed' });
 });
 
 test('installed builds do not launch or alter portable firewall rules', async () => {

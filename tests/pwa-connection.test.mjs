@@ -58,7 +58,7 @@ class FakeElement {
 
 function createHarness(fetchImpl = async () => ({ ok: true }), options = {}) {
   const ids = [
-    'cameraInput', 'galleryInput', 'uploadBtn', 'status',
+    'cameraInput', 'galleryInput', 'uploadBtn', 'cancelSendBtn', 'status',
     'selectedGrid', 'selectedCount', 'fastUploadToggle', 'fastUploadState',
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
@@ -102,9 +102,16 @@ function createHarness(fetchImpl = async () => ({ ok: true }), options = {}) {
     }
   }
 
-  const window = { localStorage };
+  const windowListeners = new Map();
+  const sessionRequests = [];
+  const sessionId = 'a'.repeat(64);
+  const window = {
+    localStorage, setTimeout, clearTimeout,
+    addEventListener: (name, listener) => windowListeners.set(name, listener),
+  };
   const context = vm.createContext({
     Blob,
+    AbortController,
     File: FakeFile,
     FormData: class FakeFormData {
       append(...entry) { formDataEntries.push(entry); }
@@ -112,14 +119,20 @@ function createHarness(fetchImpl = async () => ({ ok: true }), options = {}) {
     URL: { createObjectURL: () => '', revokeObjectURL: () => {} },
     console: { warn: (...args) => warnings.push(args) },
     document,
-    fetch: fetchImpl,
+    fetch: (path, requestOptions) => {
+      if (!path.startsWith('/api/send-session')) return fetchImpl(path, requestOptions);
+      sessionRequests.push([path, requestOptions]);
+      if (options.sessionFetch) return options.sessionFetch(path, requestOptions);
+      return Promise.resolve({ ok: true, json: async () => path === '/api/send-session'
+        ? { sessionId, expiresInMs: 60000 } : { renewed: true } });
+    },
     navigator: {},
     window,
   });
   if (options.createImageBitmap) context.createImageBitmap = options.createImageBitmap;
 
   vm.runInContext(source, context, { filename: 'pwa/app.js' });
-  Object.assign(elements, { canvases, formDataEntries, storageWrites, warnings });
+  Object.assign(elements, { canvases, formDataEntries, storageWrites, warnings, sessionRequests, windowListeners });
   return elements;
 }
 
@@ -482,6 +495,8 @@ for (const [label, status, body, message] of uploadErrorCases) {
     assert.equal(elements.selectedCount.textContent, 'Selected: 0 / 10');
     assert.equal(elements.uploadBtn.disabled, true);
     assert.equal(jsonReads, 1);
+    assert.equal(elements.sessionRequests.filter(([path]) => path.endsWith('/end')).length, 2,
+      'failed and retried uploads each end their own session');
     for (let index = 0; index < photos.length; index += 1) {
       assert.strictEqual(elements.formDataEntries[index][1], photos[index]);
       assert.strictEqual(elements.formDataEntries[index + photos.length][1], photos[index]);
@@ -537,4 +552,165 @@ test('legacy app-shell worker and cache cleanup cannot block startup', async () 
   assert.doesNotThrow(() => vm.runInContext(contextSource, context, { filename: 'pwa/app.js' }));
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(elements.status.textContent, 'No photos selected yet.');
+});
+
+const flushSend = () => new Promise(resolve => setImmediate(resolve));
+const sendAck = () => ({ ok: true, json: async () => ({ sessionId: 'a'.repeat(64), expiresInMs: 60000 }) });
+const largeSendPhoto = { name: 'large.jpg', type: 'image/jpeg', size: 8_000_000 };
+
+test('Upload waits for session acknowledgement before optimization and associates the upload with that session', async () => {
+  let acknowledge;
+  let decoded = 0;
+  let uploadOptions;
+  const elements = createHarness(async (_path, options) => { uploadOptions = options; return { ok: true }; }, {
+    sessionFetch: async path => path === '/api/send-session'
+      ? new Promise(resolve => { acknowledge = () => resolve(sendAck()); }) : sendAck(),
+    createImageBitmap: async () => { decoded += 1; return { width: 4000, height: 3000, close() {} }; },
+  });
+  elements.galleryInput.files = [largeSendPhoto];
+  await elements.galleryInput.dispatch('change');
+  assert.equal(elements.sessionRequests.length, 0, 'selection must not lock shutdown');
+  const sending = elements.uploadBtn.dispatch('click');
+  await flushSend();
+  assert.equal(elements.status.textContent, 'Starting send...');
+  assert.equal(decoded, 0);
+  assert.equal(elements.cancelSendBtn.hidden, false);
+  await elements.uploadBtn.dispatch('click');
+  assert.equal(elements.sessionRequests.length, 1, 'duplicate Upload presses do not create another lease');
+  acknowledge();
+  await sending;
+  assert.equal(decoded, 1);
+  assert.equal(uploadOptions.headers['x-snapoverlan-send-session'], 'a'.repeat(64));
+  assert.equal(elements.status.textContent, 'Uploaded 1 photo.');
+  assert.deepEqual(elements.sessionRequests.map(([path]) => path), [
+    '/api/send-session', `/api/send-session/${'a'.repeat(64)}/renew`, `/api/send-session/${'a'.repeat(64)}/end`,
+  ]);
+  assert.equal(elements.cancelSendBtn.hidden, true);
+});
+
+test('missing or invalid session acknowledgement fails safely without optimization or upload', async () => {
+  for (const response of [null, { ok: true, json: async () => ({ sessionId: '../bad' }) }]) {
+    let decoded = 0;
+    const elements = createHarness(async () => assert.fail('must not upload without a lease'), {
+      sessionFetch: async () => { if (!response) throw new TypeError('network unavailable'); return response; },
+      createImageBitmap: async () => { decoded += 1; },
+    });
+    elements.galleryInput.files = [largeSendPhoto];
+    await elements.galleryInput.dispatch('change');
+    await elements.uploadBtn.dispatch('click');
+    assert.equal(decoded, 0);
+    assert.match(elements.status.textContent, /Could not start a protected send session/);
+    assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+    assert.equal(elements.uploadBtn.disabled, false);
+  }
+});
+
+for (const event of ['click', 'pagehide']) {
+  test(`${event === 'click' ? 'explicit Cancel send' : 'leaving the phone page'} ends preparation promptly and cannot later upload`, async () => {
+    let finishDecode;
+    const elements = createHarness(async () => assert.fail('cancelled operation must not upload'), {
+      createImageBitmap: async () => new Promise(resolve => {
+        finishDecode = () => resolve({ width: 4000, height: 3000, close() {} });
+      }),
+    });
+    elements.galleryInput.files = [largeSendPhoto];
+    await elements.galleryInput.dispatch('change');
+    const sending = elements.uploadBtn.dispatch('click');
+    await flushSend();
+    assert.equal(elements.status.textContent, 'Optimizing photos...');
+    if (event === 'click') await elements.cancelSendBtn.dispatch('click');
+    else elements.windowListeners.get('pagehide')();
+    await sending;
+    assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+    assert.equal(elements.uploadBtn.disabled, false);
+    assert.match(elements.status.textContent, /Send cancelled/);
+    assert.equal(elements.sessionRequests.filter(([path]) => path.endsWith('/end')).length, 1);
+    assert.equal(elements.sessionRequests.at(-1)[1].keepalive, true);
+    finishDecode();
+    await flushSend();
+    assert.equal(elements.formDataEntries.length, 0);
+  });
+}
+
+test('preparation heartbeats renew every 10 seconds; failed renewal cancels and ends the session', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let failRenewal = false;
+  let finishDecode;
+  const elements = createHarness(async () => assert.fail('lost lease must not upload'), {
+    sessionFetch: async path => {
+      if (path.endsWith('/renew') && failRenewal) throw new TypeError('phone lost network');
+      return sendAck();
+    },
+    createImageBitmap: async () => new Promise(resolve => {
+      finishDecode = () => resolve({ width: 4000, height: 3000, close() {} });
+    }),
+  });
+  elements.galleryInput.files = [largeSendPhoto];
+  await elements.galleryInput.dispatch('change');
+  const sending = elements.uploadBtn.dispatch('click');
+  await flushSend();
+  t.mock.timers.tick(9999);
+  assert.equal(elements.sessionRequests.length, 1);
+  t.mock.timers.tick(1);
+  await flushSend();
+  assert.equal(elements.sessionRequests.filter(([path]) => path.endsWith('/renew')).length, 1);
+  failRenewal = true;
+  t.mock.timers.tick(10000);
+  await sending;
+  assert.match(elements.status.textContent, /Send interrupted/);
+  assert.equal(elements.sessionRequests.at(-1)[0].endsWith('/end'), true);
+  finishDecode();
+  await flushSend();
+});
+
+test('an expired lease at the upload boundary ends the session and preserves photos for retry', async () => {
+  const elements = createHarness(async () => assert.fail('expired session must not upload'), {
+    sessionFetch: async path => path.endsWith('/renew')
+      ? { ok: false, status: 410, json: async () => ({ error: 'expired' }) } : sendAck(),
+  });
+  elements.galleryInput.files = [{ ...largeSendPhoto, size: 10 }];
+  await elements.galleryInput.dispatch('change');
+  await elements.uploadBtn.dispatch('click');
+  assert.equal(elements.status.textContent, 'Send session expired. Press Upload again.');
+  assert.equal(elements.uploadBtn.disabled, false);
+  assert.equal(elements.sessionRequests.at(-1)[0].endsWith('/end'), true);
+});
+
+test('Cancel send aborts an active upload and ends the session once while retaining photos', async () => {
+  let uploadSignal;
+  const elements = createHarness(async (_path, options) => {
+    uploadSignal = options.signal;
+    return new Promise((_resolve, reject) => {
+      uploadSignal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+    });
+  });
+  elements.galleryInput.files = [{ ...largeSendPhoto, size: 10 }];
+  await elements.galleryInput.dispatch('change');
+  const sending = elements.uploadBtn.dispatch('click');
+  await flushSend();
+  assert.equal(elements.status.textContent, 'Uploading...');
+  await elements.cancelSendBtn.dispatch('click');
+  await sending;
+  assert.equal(uploadSignal.aborted, true);
+  assert.match(elements.status.textContent, /Send cancelled/);
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+  assert.equal(elements.sessionRequests.filter(([path]) => path.endsWith('/end')).length, 1);
+});
+
+test('a stalled session acknowledgement times out before any optimization starts', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const elements = createHarness(async () => assert.fail('must not upload without acknowledgement'), {
+    sessionFetch: async (_path, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('timeout')), { once: true });
+    }),
+    createImageBitmap: async () => assert.fail('must not optimize without acknowledgement'),
+  });
+  elements.galleryInput.files = [largeSendPhoto];
+  await elements.galleryInput.dispatch('change');
+  const sending = elements.uploadBtn.dispatch('click');
+  t.mock.timers.tick(10000);
+  await sending;
+  assert.match(elements.status.textContent, /Could not start a protected send session/);
+  assert.equal(elements.uploadBtn.disabled, false);
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
 });

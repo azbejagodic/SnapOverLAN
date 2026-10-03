@@ -17,7 +17,10 @@ const isRemotePwaRequest = (req) => {
 };
 
 const isRemoteUploadRequest = (req) => (
-  req.method === 'POST' && String(req.path || '').toLowerCase() === '/api/upload'
+  req.method === 'POST' && (
+    String(req.path || '').toLowerCase() === '/api/upload'
+    || /^\/api\/send-session(?:\/[a-f0-9]{64}\/(?:renew|end))?$/.test(String(req.path || ''))
+  )
 );
 
 // IDs differ between unpacked installations and the store; grant only the

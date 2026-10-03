@@ -95,6 +95,51 @@ const uploadFiles = async (files, { lan = false } = {}) => {
   return { response, body: await response.json() };
 };
 
+test('LAN send-session endpoints share upload Host/Origin/Referer/Fetch-Metadata protections', async () => {
+  const { uploadLifecycle } = await import('../app/server/upload-lifecycle.js');
+  const lanOrigin = `http://${advertisedAddress}:${server.address().port}`;
+  const begun = await request('/api/send-session', {
+    lan: true, method: 'POST', headers: { Origin: lanOrigin, 'Sec-Fetch-Site': 'same-origin' },
+  });
+  assert.equal(begun.status, 200);
+  const { sessionId } = await begun.json();
+  assert.match(sessionId, /^[a-f0-9]{64}$/);
+  try {
+    for (const route of ['/api/send-session', `/api/send-session/${sessionId}/renew`, `/api/send-session/${sessionId}/end`]) {
+      for (const headers of [
+        { Origin: 'https://hostile.example' }, { Origin: 'null' },
+        { Referer: 'https://hostile.example/page' }, { 'Sec-Fetch-Site': 'cross-site' },
+        { Host: `rebind.example:${server.address().port}` },
+      ]) {
+        const blocked = await request(route, { lan: true, method: 'POST', headers });
+        assert.equal(blocked.status, 403, `${route} ${JSON.stringify(headers)}`);
+        assert.equal(uploadLifecycle.status.activeSendSessions, 1);
+      }
+      const extension = await request(route, { lan: true, method: 'POST', headers: { Origin: `chrome-extension://${'a'.repeat(32)}` } });
+      assert.equal(extension.status, 404);
+      const localHostile = await request(route, { method: 'POST', headers: { Origin: 'https://hostile.example' } });
+      assert.equal(localHostile.status, 403);
+    }
+    const renewed = await request(`/api/send-session/${sessionId}/renew`, {
+      lan: true, method: 'POST', headers: { Origin: lanOrigin, 'Sec-Fetch-Site': 'same-origin' },
+    });
+    assert.equal(renewed.status, 200);
+    const unrelated = await request(`/api/send-session/${'b'.repeat(64)}/renew`, { lan: true, method: 'POST' });
+    assert.equal(unrelated.status, 410);
+    assert.equal(uploadLifecycle.status.activeSendSessions, 1);
+    const invalid = await request('/api/send-session/not-a-token/end', { lan: true, method: 'POST' });
+    assert.equal(invalid.status, 404);
+    const get = await request('/api/send-session', { lan: true });
+    assert.equal(get.status, 404);
+  } finally {
+    const ended = await request(`/api/send-session/${sessionId}/end`, {
+      lan: true, method: 'POST', headers: { Origin: lanOrigin },
+    });
+    assert.equal(ended.status, 200);
+  }
+  assert.equal(uploadLifecycle.status.uploadInProgress, false);
+});
+
 test('LAN clients can load the static phone interface without permissive CORS', async () => {
   const pageResponse = await request('/', {
     lan: true,

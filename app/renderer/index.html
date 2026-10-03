@@ -14,6 +14,7 @@
         <span>SnapOverLAN</span>
       </span>
     </div>
+    <div class="desktop-header">
     <header class="title-row">
       <div class="server-controls">
         <p id="connectionPill" class="server-line checking" aria-live="polite">
@@ -28,6 +29,21 @@
         <button id="refreshBtn" class="header-button refresh-button" type="button">Refresh</button>
       </div>
     </header>
+    <section id="publicNetworkWarning" class="network-warning" role="status" aria-live="polite" hidden>
+      <p><strong>Phone access is blocked because this network is set to Public.</strong></p>
+      <div>
+        <p>To connect your phone:</p>
+        <ol>
+          <li>Click Open network settings.</li>
+          <li>Under Network profile type, select Private network.</li>
+          <li>Return to SnapOverLAN. It will reconnect automatically.</li>
+        </ol>
+      </div>
+      <p class="network-safety-note">Use Private only on networks you trust.</p>
+      <button id="openNetworkSettingsBtn" class="header-button" type="button">Open network settings</button>
+      <p id="networkSettingsMessage" hidden></p>
+    </section>
+    </div>
 
     <section class="main-grid" aria-label="Recent batches">
       <article class="panel batches-workspace" aria-labelledby="batchesTitle">

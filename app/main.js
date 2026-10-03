@@ -25,6 +25,7 @@ import { createRendererServerClient } from './desktop/renderer-server-client.js'
 import { createUpdateDialogController } from './desktop/update-dialog-controller.js';
 import { createElectronUpdateManager } from './desktop/update-manager.js';
 import { configurePortableFirewall } from './desktop/portable-firewall.js';
+import { getWindowsNetworkProfile, openWindowsNetworkSettings } from './desktop/windows-network-profile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -380,6 +381,8 @@ const assertMainWindowFrame = (event, message = 'IPC request was rejected.') => 
   }
 };
 
+let networkSettingsAdapterType = null;
+
 ipcMain.handle('server:get-state', (event) => {
   assertMainWindowFrame(event);
   return getServerStatePayload();
@@ -391,6 +394,19 @@ ipcMain.handle('server:request', (event, resourcePath, method) => {
 ipcMain.handle('server:retry', (event) => {
   assertMainWindowFrame(event);
   return handleServerControl(() => startServer());
+});
+ipcMain.handle('network:get-profile', async (event, address) => {
+  assertMainWindowFrame(event);
+  let detectedAdapterType = null;
+  const profile = await getWindowsNetworkProfile(address, {
+    onAdapterDetected: (adapterType) => { detectedAdapterType = adapterType; },
+  });
+  networkSettingsAdapterType = detectedAdapterType;
+  return profile;
+});
+ipcMain.handle('network:open-settings', (event) => {
+  assertMainWindowFrame(event);
+  return openWindowsNetworkSettings({ shell, adapterType: networkSettingsAdapterType });
 });
 ipcMain.handle('background:get', (event) => {
   assertMainWindowFrame(event);

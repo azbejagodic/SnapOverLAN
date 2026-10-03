@@ -22,6 +22,10 @@ const createIpcHarness = () => {
     getServerStatePayload: () => { calls.push(['state']); return state; },
     rendererServerRequest: async (...args) => { calls.push(['request', ...args]); return response; },
     startServer: async () => { calls.push(['start']); return state; },
+    getWindowsNetworkProfile: async (address, { onAdapterDetected }) => {
+      calls.push(['profile', address]); onAdapterDetected('ethernet'); return 'Public';
+    },
+    openWindowsNetworkSettings: async ({ adapterType }) => { calls.push(['network-settings', adapterType]); return true; },
     backgroundMode: false,
     setBackgroundMode: async (enabled) => {
       calls.push(['background', enabled]);
@@ -45,6 +49,8 @@ const channels = [
   ['server:get-state', [], (harness) => harness.state, [['state']]],
   ['server:request', ['/api/batches', 'GET'], (harness) => harness.response, [['request', '/api/batches', 'GET']]],
   ['server:retry', [], (harness) => harness.state, [['start']]],
+  ['network:get-profile', ['192.168.1.20'], () => 'Public', [['profile', '192.168.1.20']]],
+  ['network:open-settings', [], () => true, [['network-settings', null]]],
   ['background:get', [], () => false, []],
   ['background:set', [true], () => true, [['background', true]]],
   ['batch:download', ['batch_test'], (harness) => harness.download,
@@ -96,6 +102,34 @@ test('sender validation tests cover every renderer IPC handler', () => {
   const registered = [...mainSource.matchAll(/ipcMain\.handle\('([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual(registered.sort(), channels.map(([channel]) => channel).sort());
   assert.equal(createIpcHarness().handlers.size, channels.length);
+});
+
+test('settings IPC uses the main-process adapter hint and ignores renderer-supplied URIs and adapter types', async () => {
+  const harness = createIpcHarness();
+  const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
+  await harness.handlers.get('network:get-profile')(event, '192.168.1.20');
+  await harness.handlers.get('network:open-settings')(event, 'ms-settings:privacy', 'wifi');
+  assert.deepEqual(harness.calls, [['profile', '192.168.1.20'], ['network-settings', 'ethernet']]);
+});
+
+test('settings retains the known adapter during refresh and updates it only when detection completes', async () => {
+  const harness = createIpcHarness();
+  const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
+  await harness.handlers.get('network:get-profile')(event, '192.168.1.20');
+  let finishDetection;
+  harness.context.getWindowsNetworkProfile = async (_address, { onAdapterDetected }) => {
+    onAdapterDetected(null);
+    await new Promise((resolve) => { finishDetection = resolve; });
+    onAdapterDetected('wifi');
+    return 'Public';
+  };
+  const detecting = harness.handlers.get('network:get-profile')(event, '192.168.1.20');
+  await harness.handlers.get('network:open-settings')(event);
+  assert.deepEqual(harness.calls.at(-1), ['network-settings', 'ethernet']);
+  finishDetection();
+  await detecting;
+  await harness.handlers.get('network:open-settings')(event);
+  assert.deepEqual(harness.calls.at(-1), ['network-settings', 'wifi']);
 });
 
 for (const [channel, args, expectedResult, expectedCalls] of channels) {

@@ -147,8 +147,9 @@ export async function configurePortableFirewall({
   const elevateCommand = [
     'Start-Process',
     "-FilePath 'powershell.exe'",
-    `-ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','${encodedScript}')`,
+    `-ArgumentList @('-NoProfile','-NonInteractive','-WindowStyle','Hidden','-EncodedCommand','${encodedScript}')`,
     '-Verb RunAs',
+    '-WindowStyle Hidden',
   ].join(' ');
 
   let child;

@@ -24,13 +24,29 @@ test('portable rules remain program-bound, private-profile, and local-subnet onl
   });
 
   for (const rule of Object.values(PORTABLE_FIREWALL_RULES)) assert.match(script, new RegExp(rule));
-  assert.match(script, /-Protocol TCP -LocalPort 8787 -RemoteAddress LocalSubnet -Program 'C:\\Temp\\Snap''s App\\SnapOverLAN\.exe'/);
-  assert.match(script, /-Protocol UDP -LocalPort 5353 -RemoteAddress LocalSubnet -Program 'C:\\Temp\\Snap''s App\\SnapOverLAN\.exe'/);
+  assert.match(script, /-Protocol TCP -LocalPort 8787 -RemoteAddress LocalSubnet -Program \$program/);
+  assert.match(script, /-Protocol UDP -LocalPort 5353 -RemoteAddress LocalSubnet -Program \$program/);
   assert.equal((script.match(/-Profile Private/g) || []).length, 2);
   assert.doesNotMatch(script, /Profile (?:Public|Any)|RemoteAddress Any/);
   assert.match(script, /Wait-Process -Id 4242/);
   assert.match(script, /finally \{\r\n  & \$removeRules/);
   assert.ok(script.indexOf('& $removeRules') < script.indexOf('New-NetFirewallRule'));
+});
+
+test('portable executable short paths are resolved with the Windows long-path API', () => {
+  const script = createPortableFirewallScript({
+    executablePath: 'C:\\Users\\AZBE~1\\AppData\\Local\\Temp\\BUILD~1\\SnapOverLAN.exe',
+    processId: 4242,
+    statusPath: 'C:\\Users\\Ažbe\\AppData\\Local\\Temp\\firewall.status',
+  });
+
+  assert.match(script, /EntryPoint = "GetLongPathNameW"/);
+  assert.match(script, /\$sourceProgram = 'C:\\Users\\AZBE~1\\AppData\\Local\\Temp\\BUILD~1\\SnapOverLAN\.exe'/);
+  assert.match(script, /\[SnapOverLANPath\]::GetLongPathName\(\$sourceProgram, \$programBuffer/);
+  assert.match(script, /\$program = \$programBuffer\.ToString\(\)/);
+  assert.match(script, /-Program \$program/);
+  assert.doesNotMatch(script, /-Program (?:'[^']*~1|\$sourceProgram)/i);
+  assert.match(script, /Set-Content -LiteralPath 'C:\\Users\\Ažbe\\AppData\\Local\\Temp\\firewall\.status'/);
 });
 
 test('portable configuration elevates an encoded helper and waits for readiness', async () => {

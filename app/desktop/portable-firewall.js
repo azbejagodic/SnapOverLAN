@@ -22,7 +22,7 @@ export const isPortableWindowsRuntime = ({
 export const createPortableFirewallScript = ({ executablePath, processId, statusPath }) => {
   const tcpRule = quotePowerShell(TCP_RULE);
   const mdnsRule = quotePowerShell(MDNS_RULE);
-  const program = quotePowerShell(executablePath);
+  const sourceProgram = quotePowerShell(executablePath);
   const status = quotePowerShell(statusPath);
 
   return [
@@ -34,9 +34,26 @@ export const createPortableFirewallScript = ({ executablePath, processId, status
     '  Get-NetFirewallRule -DisplayName $mdnsRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue',
     '}',
     'try {',
+    "  Add-Type -TypeDefinition @'",
+    'using System.Runtime.InteropServices;',
+    'using System.Text;',
+    'public static class SnapOverLANPath {',
+    '  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "GetLongPathNameW")]',
+    '  public static extern uint GetLongPathName(string shortPath, StringBuilder longPath, uint bufferLength);',
+    '}',
+    "'@",
+    `  $sourceProgram = ${sourceProgram}`,
+    '  $programBuffer = New-Object System.Text.StringBuilder 260',
+    '  $programLength = [SnapOverLANPath]::GetLongPathName($sourceProgram, $programBuffer, [uint32]$programBuffer.Capacity)',
+    '  if ($programLength -ge $programBuffer.Capacity) {',
+    '    $programBuffer = New-Object System.Text.StringBuilder -ArgumentList ([int]$programLength + 1)',
+    '    $programLength = [SnapOverLANPath]::GetLongPathName($sourceProgram, $programBuffer, [uint32]$programBuffer.Capacity)',
+    '  }',
+    "  if ($programLength -eq 0 -or $programLength -ge $programBuffer.Capacity) { throw 'Could not resolve the portable executable long path.' }",
+    '  $program = $programBuffer.ToString()',
     '  & $removeRules',
-    `  New-NetFirewallRule -DisplayName $tcpRule -Description 'allow phones on the same private LAN to reach portable SnapOverLAN on port 8787' -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol TCP -LocalPort 8787 -RemoteAddress LocalSubnet -Program ${program} | Out-Null`,
-    `  New-NetFirewallRule -DisplayName $mdnsRule -Description 'allow local devices to discover portable SnapOverLAN over mDNS' -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol UDP -LocalPort 5353 -RemoteAddress LocalSubnet -Program ${program} | Out-Null`,
+    "  New-NetFirewallRule -DisplayName $tcpRule -Description 'allow phones on the same private LAN to reach portable SnapOverLAN on port 8787' -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol TCP -LocalPort 8787 -RemoteAddress LocalSubnet -Program $program | Out-Null",
+    "  New-NetFirewallRule -DisplayName $mdnsRule -Description 'allow local devices to discover portable SnapOverLAN over mDNS' -Direction Inbound -Action Allow -Enabled True -Profile Private -Protocol UDP -LocalPort 5353 -RemoteAddress LocalSubnet -Program $program | Out-Null",
     `  Set-Content -LiteralPath ${status} -Value 'ready' -Encoding Ascii`,
     `  Wait-Process -Id ${processId} -ErrorAction SilentlyContinue`,
     '} catch {',

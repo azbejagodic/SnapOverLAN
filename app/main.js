@@ -381,6 +381,8 @@ const assertMainWindowFrame = (event, message = 'IPC request was rejected.') => 
   }
 };
 
+let networkSettingsAdapterType = null;
+
 ipcMain.handle('server:get-state', (event) => {
   assertMainWindowFrame(event);
   return getServerStatePayload();
@@ -393,13 +395,18 @@ ipcMain.handle('server:retry', (event) => {
   assertMainWindowFrame(event);
   return handleServerControl(() => startServer());
 });
-ipcMain.handle('network:get-profile', (event, address) => {
+ipcMain.handle('network:get-profile', async (event, address) => {
   assertMainWindowFrame(event);
-  return getWindowsNetworkProfile(address);
+  let detectedAdapterType = null;
+  const profile = await getWindowsNetworkProfile(address, {
+    onAdapterDetected: (adapterType) => { detectedAdapterType = adapterType; },
+  });
+  networkSettingsAdapterType = detectedAdapterType;
+  return profile;
 });
 ipcMain.handle('network:open-settings', (event) => {
   assertMainWindowFrame(event);
-  return openWindowsNetworkSettings({ shell });
+  return openWindowsNetworkSettings({ shell, adapterType: networkSettingsAdapterType });
 });
 ipcMain.handle('background:get', (event) => {
   assertMainWindowFrame(event);

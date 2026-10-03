@@ -30,8 +30,16 @@
       </div>
     </header>
     <section id="publicNetworkWarning" class="network-warning" role="status" aria-live="polite" hidden>
-      <p><strong>Phone access is blocked because this Windows network is set to Public.</strong></p>
-      <p>SnapOverLAN allows phone access on Private networks only. If you trust this home or private network, open its Wi-Fi or Ethernet properties in Windows Settings and change the network profile to Private. Keep Public on shared or untrusted networks.</p>
+      <p><strong>Phone access is blocked because this network is set to Public.</strong></p>
+      <div>
+        <p>To connect your phone:</p>
+        <ol>
+          <li>Click Open network settings.</li>
+          <li>Under Network profile type, select Private network.</li>
+          <li>Return to SnapOverLAN. It will reconnect automatically.</li>
+        </ol>
+      </div>
+      <p class="network-safety-note">Use Private only on networks you trust.</p>
       <button id="openNetworkSettingsBtn" class="header-button" type="button">Open network settings</button>
       <p id="networkSettingsMessage" hidden></p>
     </section>

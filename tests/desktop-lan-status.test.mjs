@@ -322,9 +322,12 @@ test('Public profile shows a phone-access warning while the server stays online 
   assert.deepEqual(h.profileRequests, ['192.168.1.20']);
   assert.equal(h.elements.phoneUrl.textContent, stableUrl);
   const markup = await readFile(new URL('../app/renderer/index.html', import.meta.url), 'utf8');
-  assert.match(markup, /Phone access is blocked because this Windows network is set to Public/);
-  assert.match(markup, /If you trust this home or private network/);
-  assert.match(markup, /Keep Public on shared or untrusted networks/);
+  assert.match(markup, /Phone access is blocked because this network is set to Public/);
+  assert.match(markup, /To connect your phone:/);
+  assert.match(markup, /<li>Click Open network settings\.<\/li>/);
+  assert.match(markup, /<li>Under Network profile type, select Private network\.<\/li>/);
+  assert.match(markup, /<li>Return to SnapOverLAN\. It will reconnect automatically\.<\/li>/);
+  assert.match(markup, /Use Private only on networks you trust/);
 });
 
 for (const profile of ['Private', 'DomainAuthenticated', null, new Error('detection failed')]) {

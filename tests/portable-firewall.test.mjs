@@ -113,7 +113,7 @@ test('portable executable short paths are resolved with the Windows long-path AP
   assert.match(script, /Set-Content -LiteralPath 'C:\\Users\\Ažbe\\AppData\\Local\\Temp\\firewall\.status'/);
 });
 
-test('portable configuration detaches the elevated helper and waits for its readiness status', async () => {
+test('portable configuration launches the elevated helper hidden and waits only for its readiness status', async () => {
   const child = new EventEmitter();
   child.unref = () => { child.unreferenced = true; };
   let launch;
@@ -146,8 +146,15 @@ test('portable configuration detaches the elevated helper and waits for its read
   assert.equal(launch.command, 'powershell.exe');
   assert.deepEqual(launch.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
   assert.match(launch.args[3], /-Verb RunAs/);
+  assert.match(launch.args[3], /-WindowStyle Hidden(?:\s|$)/);
+  assert.match(launch.args[3], /-ArgumentList @\('-NoProfile','-NonInteractive','-WindowStyle','Hidden','-EncodedCommand',/);
   assert.doesNotMatch(launch.args[3], /(?:^|\s)-Wait(?:\s|$)/);
-  assert.match(launch.args[3], /-EncodedCommand/);
+  assert.doesNotMatch(launch.args[3], /Wait-Process/);
+  const encodedHelper = launch.args[3].match(/'-EncodedCommand','([A-Za-z0-9+/=]+)'/)?.[1];
+  assert.ok(encodedHelper);
+  const helperScript = Buffer.from(encodedHelper, 'base64').toString('utf16le');
+  assert.match(helperScript, /Wait-Process -Id 99 -ErrorAction Stop/);
+  assert.match(helperScript, /finally \{\r\n  try \{\r\n    & \$removeRules 'exit'/);
   assert.deepEqual(launch.options, { windowsHide: true, stdio: 'ignore' });
   assert.equal(child.unreferenced, true);
 });

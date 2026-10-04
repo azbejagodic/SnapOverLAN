@@ -10,7 +10,7 @@ SnapOverLAN is a Windows phone-to-PC photo transfer bridge for a trusted local n
 - JPEG, PNG, WebP, HEIC, and HEIF support
 - Up to 10 photos per batch, with a 20 MiB limit per photo
 - Fast Upload optimization for large photos
-- Stable `.local` phone address with direct-IP fallback
+- Stable `.local` phone address where available, with direct-IP fallback
 - Recent batch history, selection, download, and deletion in the desktop app
 - Manual Copy/Open actions and optional first-photo Auto-copy through the browser extension
 - Background operation from the Windows system tray
@@ -18,9 +18,9 @@ SnapOverLAN is a Windows phone-to-PC photo transfer bridge for a trusted local n
 
 ## How it works
 
-1. The Electron desktop app starts a server or reuses a verified current SnapOverLAN server on TCP port `8787`, then shows a phone URL and QR code.
-2. A phone on the same network opens that address and uploads a photo batch through the browser-based phone interface.
-3. The desktop app records the batch. Use the desktop app to manage or download batches, or the extension to copy/open photos from the current batch.
+1. Launch SnapOverLAN on the PC. It shows a phone address and QR code.
+2. Open that address on a phone reachable on the same local network, select photos, and press **Upload selected photos**.
+3. Use the desktop app to manage or download received batches, or the extension to copy/open photos from the current batch.
 
 The Express server is an internal part of the desktop app. A standalone server command is provided for development.
 
@@ -29,60 +29,53 @@ The Express server is an internal part of the desktop app. A standalone server c
 - Windows x64 PC
 - Phone and PC on the same trusted/private local network
 - Chrome or Brave if using the extension
-- Node.js 24.19.0 or newer when running or building from source
 
-The current end-user build target is Windows. Tagged releases are configured to provide the Windows Setup executable, portable executable, and browser-extension ZIP through [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases). If the available release does not yet include those assets, use the source or local-build instructions below.
+Download packaged binaries from [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases). The filenames below refer to v2.0.0. Source builds are covered separately under [Development](#development).
 
 ## Installation and getting started
 
 ### Windows Setup
 
-From [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases), download `SnapOverLAN-Setup-<version>-x64.exe` from a release that includes binary assets and run it. The per-machine installer creates Start Menu and desktop shortcuts and configures the required Private-network Windows Firewall rules.
+Download `SnapOverLAN-Setup-2.0.0-x64.exe` from [GitHub Releases](https://github.com/azbejagodic/SnapOverLAN/releases), run the installer, and launch SnapOverLAN. The installer creates Start Menu and desktop shortcuts and configures the required Private-network Windows Firewall rules.
+
+The current build is unsigned, so Windows may show **Unknown publisher** in the administrator (UAC) prompt.
+
+### Connect your phone
+
+Phone and PC must be reachable on the same local network. Open **QR** in SnapOverLAN and scan it with the phone, or open the displayed address in the phone's browser. A `.local` address is available when mDNS discovery is running; the direct LAN IP shown in **Server diagnostics** is the reliable fallback when `.local` does not work.
+
+On Windows, the network must be set to **Private** for SnapOverLAN's firewall rules to allow phone access. See [Windows network profile](#windows-network-profile) below.
 
 ### Portable app
 
-Download `SnapOverLAN-<version>-portable-x64.exe` from the same release and run it directly. Windows asks for administrator approval at launch so the portable app can add private-LAN-only firewall rules for its lifetime. The rules are removed when the app exits.
+Download `SnapOverLAN-2.0.0-portable-x64.exe` from the same Releases page and run it directly. It serves the phone interface and receives uploads normally.
+
+Windows UAC approval is expected when portable mode needs temporary firewall access. The temporary SnapOverLAN rules allow only Private-network, local-subnet access for the running executable and are removed automatically after the portable app exits. After elevation, the firewall helper runs hidden; there is no persistent PowerShell window to manage. Manual firewall rule creation is not normally needed.
+
+Portable mode does not use the updater. To update, download the newer portable executable and replace the old one after quitting SnapOverLAN.
 
 ### Browser extension
 
-Download and extract `SnapOverLAN-extension-<version>.zip` from the same release. Then:
+Download and extract `SnapOverLAN-extension-2.0.0.zip` from the same release. The extension is installed unpacked using Developer Mode, rather than through a browser store:
 
 1. Open `chrome://extensions` or `brave://extensions`.
 2. Enable **Developer Mode**.
 3. Select **Load unpacked**.
 4. Choose the extracted directory containing `manifest.json`.
 
-### Run from source
-
-Clone the repository and run:
-
-```text
-git clone https://github.com/azbejagodic/SnapOverLAN.git
-cd SnapOverLAN
-npm ci
-npm start
-```
-
-If the source was downloaded as an archive, open a terminal in the extracted directory and run the final two commands instead.
-
-The desktop app starts the local server and opens the SnapOverLAN window. Connect the phone and PC to the same network, select **QR**, and scan the code with the phone.
-
-### Build release artifacts locally
-
-```text
-npm ci
-npm run release:build
-```
-
-The user downloads are written to `dist/`:
-
-- `SnapOverLAN-Setup-<version>-x64.exe`
-- `SnapOverLAN-<version>-portable-x64.exe`
-- `SnapOverLAN-extension-<version>.zip`
-
-The build also produces `latest.yml` and the installer `.blockmap` for the updater. The desktop version comes from `package.json`; release CI requires `extension/manifest.json` to use the same version.
-
 ## Using SnapOverLAN
+
+### Windows network profile
+
+SnapOverLAN intentionally allows phone access through Windows Firewall only on **Private** networks and from the **local subnet**. On a Public network, the app can show **Server online** while the firewall blocks the phone connection.
+
+When SnapOverLAN detects that the network used for phone access is Public, it shows a warning. On a network you trust:
+
+1. Click **Open network settings**. It opens Ethernet or Wi-Fi settings when the adapter is detected, or general network settings otherwise.
+2. Under **Network profile type**, select **Private network**.
+3. Return to SnapOverLAN; the warning updates automatically without an app restart.
+
+Use Private only on networks you trust. SnapOverLAN does not change the Windows network profile automatically or enable Public-profile firewall access.
 
 ### Desktop app
 
@@ -98,7 +91,7 @@ The desktop app:
 
 Selecting an older batch also makes it the batch shown by the extension. A desktop download opens the Downloads folder after the files are saved.
 
-Legacy servers are recognized only to show a helpful error; they are never reused. Background Mode is off by default. When enabled, closing the window hides it; when disabled, closing requests Quit. Tray **Quit** also requests shutdown. Active uploads block Quit and update restart: wait for the upload to finish, then retry.
+Legacy servers are recognized only to show a helpful error; they are never reused. Background Mode is off by default. When enabled, closing the window hides it and keeps the server running in the tray; when disabled, closing requests Quit. Tray **Quit** exits the application when no send is active. An active send blocks shutdown and update restart, including during phone-side optimization; finish or cancel the send, then retry.
 
 ### Phone interface
 
@@ -108,8 +101,13 @@ Open the QR-code address in the phone's browser. The interface provides:
 - **Choose from gallery** for multiple selection;
 - a preview tray for up to 10 photos;
 - removal of individual photos before upload;
-- the Fast Upload toggle; and
-- one action to upload the selected batch.
+- the Fast Upload toggle;
+- **Upload selected photos** to send the selected batch; and
+- **Cancel send** while preparing or uploading.
+
+Selecting photos alone does not prevent desktop shutdown. Pressing Upload first asks the PC to protect the send; optimization starts only after the PC acknowledges it. If the PC cannot acknowledge the start, the phone shows an error and keeps the photos selected for retry.
+
+Once acknowledged, the send is protected through phone-side optimization and actual upload: closing the desktop to quit, tray **Quit**, and **Restart & Update** are blocked. Completion, failure, or cancellation releases the protection after any upload cleanup. If the phone disappears during preparation, protection expires automatically rather than leaving the PC locked indefinitely.
 
 Supported upload formats are JPEG, PNG, WebP, HEIC, and HEIF. Each photo sent to the server must be no larger than 20 MiB (shown as 20 MB in the UI). If more than 10 supported photos are chosen, only the available tray slots are filled.
 
@@ -143,7 +141,7 @@ The extension declares `clipboardWrite` and HTTP host access for `localhost` and
 
 Only installed Windows builds use the updater. They check GitHub Releases after startup and every 12 hours, and automatically download available updates. Explicitly reopening the app also checks for updates or re-presents an already downloaded update. Periodic checks do not re-present a dismissed prompt.
 
-After download, choose **Later** or **Restart & Update**. Ordinary Quit does not install the update. Active uploads block installation; wait for the upload to finish and retry **Restart & Update**. During installation, a native NSIS progress window appears. Closing that window hides it rather than cancelling installation; the app reopens after the update.
+After download, choose **Later** or **Restart & Update**. Ordinary Quit does not install the update. Active sends block installation, including during phone-side optimization; finish or cancel the send and retry **Restart & Update**. During installation, a native NSIS progress window appears. Closing that window hides it rather than cancelling installation; the app reopens after the update.
 
 Portable and development builds do not use the updater. Portable users download a newer release and replace the executable manually.
 
@@ -163,7 +161,7 @@ The desktop cannot detect a phone's failure to resolve `.local`. If that happens
 
 SnapOverLAN is designed for a trusted private network. It provides no user accounts, authenticated phone uploads, or HTTPS, and is unsuitable for an untrusted or public network. Anyone who can reach port `8787` on the LAN can load the phone interface and submit a supported photo batch. Internal desktop lifecycle/control uses a shutdown/control token.
 
-Non-loopback clients are intentionally limited to the phone interface and its static assets plus `POST /api/upload`. Saved batches, stored-file reads, diagnostics, Auto-copy, and server-control operations return `404` to LAN clients and remain available only through loopback (`localhost`/`127.0.0.1`) for the desktop app and extension.
+Non-loopback clients are intentionally limited to the phone interface, its static assets, upload, and send-session requests. Upload and send-session requests are checked against the allowed Host, Origin, Referer, and Fetch-Metadata rules. Saved batches, stored-file reads, diagnostics, Auto-copy, and server-control operations return `404` to LAN clients and remain available only through loopback (`localhost`/`127.0.0.1`) for the desktop app and extension.
 
 Loopback management also rejects ordinary cross-site web Origins, opaque (`null`) Origins, and non-loopback Host names. The desktop renderer uses native IPC; installed Chrome/Brave extension Origins are allowed independently of their installation ID. Native clients without browser Origin headers and same-origin localhost requests remain supported. This boundary trusts local software and installed extensions with localhost access.
 
@@ -171,21 +169,26 @@ Uploads are decoded before a batch becomes available, and stored extensions come
 
 ## Windows Firewall and troubleshooting
 
-The Setup installer creates two inbound Windows Firewall rules on the Private profile:
+The Setup installer creates two inbound Windows Firewall rules, both restricted to the **Private** profile and **LocalSubnet**:
 
-- `SnapOverLAN LAN Upload` — TCP port `8787`
-- `SnapOverLAN mDNS` — UDP port `5353`, restricted to the local subnet
+- `SnapOverLAN LAN Upload` — TCP port `8787` for the LAN service
+- `SnapOverLAN mDNS` — UDP port `5353` for mDNS discovery
 
-Both installed-build rules are removed during uninstall. The portable executable creates separate, program-bound rules with the same port, Private-profile, and local-subnet restrictions, then removes them when the portable app exits.
+The portable executable creates separate, program-bound temporary rules with the same ports and restrictions, then removes them when the portable app exits. Public-profile access is intentionally not enabled. Keep Windows Firewall enabled.
 
-If the phone cannot connect:
+### Uninstall
 
-1. Set the Windows network profile to **Private**.
-2. Confirm the phone and PC are on the same Wi-Fi or private LAN.
-3. Use the `.local` or LAN IP address shown by the desktop app, not `localhost`.
-4. Try a listed direct-IP URL if `.local` resolution fails.
-5. Check guest Wi-Fi, access-point isolation, VPN routing, multicast filtering, and third-party firewall settings.
-6. If using the portable build, approve its Windows administrator prompt so it can configure its launch-scoped firewall rules.
+Uninstall SnapOverLAN through Windows Settings > Apps. Uninstalling the installed build removes the application, its shortcuts, and both installed SnapOverLAN firewall rules.
+
+### Troubleshooting
+
+| Symptom | What to do |
+| --- | --- |
+| Phone cannot connect | Confirm the phone and PC are reachable on the same LAN, check that the trusted Windows network is Private, and try a direct LAN IP shown in Server diagnostics. Do not use `localhost` on the phone. |
+| `.local` address does not open | Use a direct LAN IP from Server diagnostics. |
+| A previous QR code or address no longer works | The network or IP may have changed. Use the current QR code/address shown in SnapOverLAN. |
+| Public-network warning appears | Follow **Open network settings** and select Private only if you trust the network. |
+| Portable launch asks for UAC approval | This is expected for temporary firewall setup; approve it to allow phone access on your trusted Private network. |
 
 ## Storage and upload history
 
@@ -202,11 +205,17 @@ The runtime data includes batch directories, the current-batch pointer, device i
 
 ## Development
 
-Install dependencies:
+Source development requires Node.js **24.19.0 or newer**. Normal users should use the packaged Setup or portable executable; `npm start` and `dist/win-unpacked` are development/build outputs, not the release acceptance artifacts.
+
+Clone the repository and install dependencies:
 
 ```text
+git clone https://github.com/azbejagodic/SnapOverLAN.git
+cd SnapOverLAN
 npm ci
 ```
+
+If you downloaded a source archive, open a terminal in the extracted directory and run `npm ci` instead.
 
 Start the Electron desktop app:
 
@@ -246,6 +255,14 @@ Build all three release artifacts:
 npm run release:build
 ```
 
+For v2.0.0, the packaged release and acceptance artifacts in `dist/` are:
+
+- `SnapOverLAN-Setup-2.0.0-x64.exe`
+- `SnapOverLAN-2.0.0-portable-x64.exe`
+- `SnapOverLAN-extension-2.0.0.zip`
+
+The build also produces `latest.yml` and the installer `.blockmap` for the updater. Versions come from `package.json` and `extension/manifest.json` and must match for release CI.
+
 ### CI and releases
 
 Normal CI (`.github/workflows/ci.yml`) runs on pushes to `main` and pull requests targeting `main`. It uses a Windows runner and Node 24.19.0 to run `npm ci` and `node --test`, without building or publishing artifacts.
@@ -277,6 +294,9 @@ The HTTP interface is an implementation detail shared by the phone UI, desktop a
 LAN-accessible surface:
 
 - `GET`/`HEAD /` and the phone interface's static assets
+- `POST /api/send-session` — begin a protected send before phone-side preparation
+- `POST /api/send-session/:sessionId/renew` — renew that send
+- `POST /api/send-session/:sessionId/end` — release that send
 - `POST /api/upload` — multipart form field `photos`, with up to 10 supported photos
 
 Important localhost-only routes:

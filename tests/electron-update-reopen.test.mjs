@@ -331,8 +331,80 @@ test('renderer loads, server changes, background toggles, and internal tray upda
   assert.deepEqual(app.errors, []);
 });
 
+test('window focus, show, restore, move, and resize events do not check or bypass Later', async () => {
+  const app = createHarness();
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '2.0.1' });
+  await flush();
+  app.updateWindows[0].close();
+  await flush();
+  const window = app.desktop.getMainWindow();
+  for (const event of ['focus', 'blur', 'focus', 'show', 'restore', 'move', 'resize']) {
+    window.emit(event);
+  }
+  app.desktop.showMainWindow();
+  await flush();
+  assert.equal(app.checkCalls, 1);
+  assert.equal(app.updateWindows.length, 1);
+  assert.equal(app.updateWindows[0].isDestroyed(), true);
+});
+
+test('manual Desktop and tray opens honor Skip and can discover a newer version immediately', async () => {
+  const settings = { backgroundMode: true, skippedUpdateVersion: '2.0.1' };
+  const app = createHarness({ settings });
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '2.0.1' });
+  app.setCheck(async () => ({ isUpdateAvailable: true, updateInfo: { version: '2.0.1' } }));
+  for (const open of [
+    () => app.electronApp.emit('second-instance'),
+    () => app.trays[0].menu.find((item) => item.label === 'Open SnapOverLAN').click(),
+  ]) {
+    app.desktop.getMainWindow().close();
+    open();
+    await flush();
+    app.updater.emit('update-downloaded', { version: '2.0.1' });
+    await flush();
+    assert.equal(app.updateWindows.length, 0);
+  }
+  assert.equal(app.checkCalls, 3);
+  app.setCheck(async () => ({ isUpdateAvailable: true, updateInfo: { version: '2.0.2' } }));
+  app.trays[0].emit('double-click');
+  await flush();
+  assert.equal(app.checkCalls, 4);
+  assert.equal(app.manager.getState().version, '2.0.2');
+  app.updater.emit('update-downloaded', { version: '2.0.2' });
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  app.updateWindows[0].close();
+  await flush();
+  assert.equal(settings.skippedUpdateVersion, '2.0.1');
+});
+
+test('manual open intent survives a delayed download of a version dismissed with Later', async () => {
+  const app = createHarness();
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '2.0.1' });
+  await flush();
+  app.updateWindows[0].close();
+  await flush();
+  app.updater.emit('error', new Error('offline'));
+  app.setCheck(async () => ({ isUpdateAvailable: true, updateInfo: { version: '2.0.1' } }));
+  app.electronApp.emit('second-instance');
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  app.updater.emit('download-progress', { percent: 50 });
+  app.updater.emit('update-downloaded', { version: '2.0.1' });
+  await flush();
+  assert.equal(app.updateWindows.length, 2);
+  app.updateWindows[1].close();
+  await flush();
+  app.updater.emit('update-downloaded', { version: '2.0.1' });
+  await app.clock.advance(43_200_000);
+  assert.equal(app.updateWindows.length, 2, 'manual intent is consumed once');
+});
+
 for (const dismissal of ['later', 'close']) {
-  test(`downloaded update dismissed with ${dismissal} stays silent through tray and activation opens`, async () => {
+  test(`downloaded update dismissed with ${dismissal} reappears on explicit shortcut and tray opens`, async () => {
     const app = createHarness();
     await app.ready();
     app.updater.emit('update-downloaded', { version: '9.0.0' });
@@ -347,17 +419,24 @@ for (const dismissal of ['later', 'close']) {
       () => app.trays[0].emit('double-click'),
       () => app.electronApp.emit('activate'),
     ];
-    for (const reopen of reopenActions) {
+    for (const [index, reopen] of reopenActions.entries()) {
       app.desktop.getMainWindow().close();
       reopen();
       await flush();
       app.updater.emit('update-downloaded', { version: '9.0.0' });
       await flush();
       assert.equal(app.desktop.getMainWindow().isVisible(), true);
-      assert.equal(app.updateWindows.length, 1);
+      assert.equal(app.updateWindows.length, index + 2);
       assert.equal(popup.isDestroyed(), true);
+      const nextPopup = app.updateWindows.at(-1);
+      assert.equal(nextPopup.options.parent, app.desktop.getMainWindow());
+      nextPopup.webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
+      await flush();
+      app.updater.emit('update-downloaded', { version: '9.0.0' });
+      await flush();
+      assert.equal(app.updateWindows.length, index + 2, 'automatic reminders remain suppressed');
     }
-    assert.equal(app.checkCalls, 1);
+    assert.equal(app.checkCalls, 5);
     assert.deepEqual(app.errors, []);
   });
 }
@@ -422,7 +501,7 @@ test('updates found on reopen retain auto-download and forward readiness to the 
   app.updater.emit('update-downloaded', { version: '9.0.0' });
   app.electronApp.emit('second-instance');
   await flush();
-  assert.equal(app.checkCalls, 2);
+  assert.equal(app.checkCalls, 3);
   assert.equal(app.manager.isInstallationReady(), true);
   assert.equal(app.dialogStates.at(-1).status, 'downloaded');
   assert.equal(app.dialogStates.at(-1).version, '9.0.0');
@@ -523,8 +602,9 @@ test('periodic downloads prompt normally but ticks preserve downloads and Later 
   app.desktop.getMainWindow().close();
   app.electronApp.emit('second-instance');
   await flush();
-  assert.equal(app.updateWindows.length, 1);
-  assert.equal(app.updateWindows[0].isDestroyed(), true);
+  assert.equal(app.updateWindows.length, 2);
+  assert.equal(app.checkCalls, 5);
+  app.updateWindows[1].close();
   await flush();
 });
 
@@ -545,7 +625,7 @@ test('quitting clears the periodic timer and queued ticks cannot restart checks'
   assert.equal(app.clock.scheduled.length, 1);
 });
 
-test('simultaneous shortcut, tray, and activation opens do not duplicate or reset the session prompt', async () => {
+test('simultaneous shortcut, tray, and activation opens share one dialog and one feed check', async () => {
   const app = createHarness();
   await app.ready();
   app.updater.emit('update-downloaded', { version: '9.0.0' });
@@ -556,12 +636,21 @@ test('simultaneous shortcut, tray, and activation opens do not duplicate or rese
   assert.equal(app.updateWindows.length, 1);
   app.updateWindows[0].close();
   await flush();
+  const pending = deferred();
+  app.setCheck(() => pending.promise);
   app.electronApp.emit('second-instance');
   app.trays[0].emit('double-click');
   app.electronApp.emit('activate');
   await flush();
-  assert.equal(app.updateWindows.length, 1);
-  assert.equal(app.updateWindows[0].isDestroyed(), true);
+  assert.equal(app.updateWindows.length, 2);
+  assert.equal(app.updateWindows.filter((window) => !window.isDestroyed()).length, 1);
+  assert.equal(app.checkCalls, 3);
+  assert.equal(app.maxActiveChecks, 1);
+  app.updateWindows[1].close();
+  await flush();
+  pending.resolve({ isUpdateAvailable: true, updateInfo: { version: '9.0.0' } });
+  await flush();
+  assert.equal(app.updateWindows.length, 2, 'finishing the check must not re-prompt after Later');
   assert.deepEqual(app.errors, []);
 });
 
@@ -615,8 +704,11 @@ test('disabled or failed updater initialization does not schedule periodic check
     const app = createHarness(options);
     await app.ready();
     app.electronApp.emit('second-instance');
+    app.trays[0].emit('double-click');
+    app.trays[0].menu.find((item) => item.label === 'Open SnapOverLAN').click();
     await flush();
     assert.equal(app.clock.scheduled.length, 0);
     assert.equal(app.checkCalls, 0);
+    assert.equal(app.updateWindows.length, 0);
   }
 });

@@ -62,6 +62,8 @@ const createUpdateDialogController = ({
   let activePrompt = null;
   let activeWindow = null;
   let installStarted = false;
+  // A manual-open check can finish before its download is ready to prompt.
+  let userOpenPending = false;
   let disposed = false;
 
   const warn = (message) => {
@@ -215,9 +217,18 @@ const createUpdateDialogController = ({
       if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy();
       activeWindow = null;
     },
-    // Tray/window opens are part of the same process session, not manual checks.
-    handleState: (state) => promptDownloadedUpdate(state),
-    handleUserOpen: (state) => promptDownloadedUpdate(state),
+    handleState: (state) => {
+      const userInitiated = userOpenPending && state?.status === 'downloaded';
+      if (['downloaded', 'not-available', 'error', 'disabled'].includes(state?.status)) {
+        userOpenPending = false;
+      }
+      return promptDownloadedUpdate(state, { userInitiated });
+    },
+    // Explicit opens bypass Later, but still honor the persisted skipped version.
+    handleUserOpen: (state) => {
+      userOpenPending = state?.status !== 'downloaded' && state?.status !== 'disabled';
+      return promptDownloadedUpdate(state, { userInitiated: true });
+    },
     handleManualCheck: (state) => promptDownloadedUpdate(state, { userInitiated: true, manualCheck: true }),
   });
 };

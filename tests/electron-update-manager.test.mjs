@@ -52,6 +52,36 @@ const createInstalledManager = (updater = new FakeUpdater(), options = {}) => cr
   ...options,
 });
 
+test('periodic checks preserve a ready version and discover a different available version', async () => {
+  const updater = new FakeUpdater();
+  const manager = createInstalledManager(updater);
+  updater.emit('update-downloaded', { version: '2.0.1' });
+  const ready = manager.getState();
+  updater.checkImplementation = async () => {
+    updater.emit('checking-for-update');
+    updater.emit('update-available', { version: '2.0.1' });
+    updater.emit('update-downloaded', { version: '2.0.1' });
+    return { isUpdateAvailable: true, updateInfo: { version: '2.0.1' } };
+  };
+  await manager.checkForUpdates({ checkDownloaded: true });
+  assert.equal(manager.isInstallationReady(), true);
+  assert.equal(manager.getState().version, ready.version);
+  updater.checkImplementation = async () => ({ isUpdateAvailable: false });
+  await manager.checkForUpdates({ checkDownloaded: true });
+  assert.equal(manager.isInstallationReady(), true);
+  updater.checkImplementation = async () => ({ isUpdateAvailable: true, updateInfo: { version: '2.0.10' } });
+  const first = manager.checkForUpdates({ checkDownloaded: true });
+  assert.equal(manager.checkForUpdates({ checkDownloaded: true }), first);
+  await first;
+  assert.equal(updater.checkCalls, 3);
+  assert.equal(manager.getState().status, 'available');
+  assert.equal(manager.getState().version, '2.0.10');
+  updater.emit('update-downloaded', { version: '2.0.10' });
+  assert.equal(manager.installDownloadedUpdate(), true);
+  await manager.checkForUpdates({ checkDownloaded: true });
+  assert.equal(updater.checkCalls, 3, 'installation must not race a new check');
+});
+
 test('update statuses are constrained to the normalized public states', () => {
   assert.deepEqual(UPDATE_STATUSES, [
     'disabled',

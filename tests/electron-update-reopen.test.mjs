@@ -57,6 +57,7 @@ const createClock = () => {
 
 const createHarness = ({
   initialization = Promise.resolve(), initializationError = null, isPackaged = true,
+  settings = { backgroundMode: true }, env = {},
 } = {}) => {
   const ready = deferred();
   const clock = createClock();
@@ -123,7 +124,7 @@ const createHarness = ({
     finally { activeChecks -= 1; }
   };
   const manager = createUpdateManager({
-    isPackaged, platform: 'win32', env: {}, updater,
+    isPackaged, platform: 'win32', env, updater,
     logger: { info() {}, warn() {} },
   });
   const electronApp = new EventEmitter();
@@ -152,7 +153,7 @@ const createHarness = ({
     normalizeDesktopSettings, updateDesktopSetting, createDesktopShell,
     createRendererServerClient: () => async () => ({}),
     createSettingsStore: () => ({
-      load: async () => ({ backgroundMode: true }), save: async () => {},
+      load: async () => settings, save: async (next) => { Object.assign(settings, next); },
     }),
     createAutoCopyController: () => ({}),
     configurePortableFirewall: async () => ({ configured: false, reason: 'not-portable-windows' }),
@@ -331,65 +332,35 @@ test('renderer loads, server changes, background toggles, and internal tray upda
 });
 
 for (const dismissal of ['later', 'close']) {
-  test(`downloaded update dismissed with ${dismissal} reappears through every explicit open path`, async () => {
+  test(`downloaded update dismissed with ${dismissal} stays silent through tray and activation opens`, async () => {
     const app = createHarness();
     await app.ready();
     app.updater.emit('update-downloaded', { version: '9.0.0' });
     await flush();
-    assert.equal(app.updateWindows.length, 1);
+    const popup = app.updateWindows[0];
+    if (dismissal === 'close') popup.close();
+    else popup.webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
+    await flush();
     const reopenActions = [
       () => app.electronApp.emit('second-instance'),
       () => app.trays[0].menu.find((item) => item.label === 'Open SnapOverLAN').click(),
       () => app.trays[0].emit('double-click'),
       () => app.electronApp.emit('activate'),
     ];
-    for (const [index, reopen] of reopenActions.entries()) {
-      const popup = app.updateWindows.at(-1);
-      assert.equal(popup.isVisible(), true);
-      if (dismissal === 'close') popup.close();
-      else popup.webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'later');
-      await flush();
-      assert.equal(popup.isDestroyed(), true);
-      app.updater.emit('update-downloaded', { version: '9.0.0' });
-      await flush();
-      assert.equal(app.updateWindows.length, index + 1);
+    for (const reopen of reopenActions) {
       app.desktop.getMainWindow().close();
-      assert.equal(app.desktop.getMainWindow().isVisible(), false);
       reopen();
       await flush();
+      app.updater.emit('update-downloaded', { version: '9.0.0' });
+      await flush();
       assert.equal(app.desktop.getMainWindow().isVisible(), true);
-      assert.equal(app.updateWindows.length, index + 2);
-      assert.equal(app.updateWindows.at(-1).options.parent, app.desktop.getMainWindow());
-      assert.equal(app.updateWindows.filter((window) => !window.isDestroyed()).length, 1);
-      assert.equal(app.checkCalls, 1);
+      assert.equal(app.updateWindows.length, 1);
+      assert.equal(popup.isDestroyed(), true);
     }
-    app.updateWindows.at(-1).close();
-    await flush();
+    assert.equal(app.checkCalls, 1);
     assert.deepEqual(app.errors, []);
-    assert.deepEqual(app.warnings, []);
   });
 }
-
-test('simultaneous shortcut, tray, and activation opens share one downloaded-update dialog', async () => {
-  const app = createHarness();
-  await app.ready();
-  app.updater.emit('update-downloaded', { version: '9.0.0' });
-  await flush();
-  app.updateWindows[0].close();
-  await flush();
-  app.desktop.getMainWindow().close();
-  app.electronApp.emit('second-instance');
-  app.trays[0].emit('double-click');
-  app.electronApp.emit('activate');
-  await flush();
-  assert.equal(app.updateWindows.length, 2);
-  assert.equal(app.updateWindows.filter((window) => !window.isDestroyed()).length, 1);
-  app.updateWindows[1].close();
-  await flush();
-  assert.equal(app.updateWindows.length, 2);
-  assert.equal(app.checkCalls, 1);
-  assert.deepEqual(app.errors, []);
-});
 
 test('a check finishing after a fresh download was dismissed does not re-prompt', async () => {
   const app = createHarness();
@@ -545,16 +516,15 @@ test('periodic downloads prompt normally but ticks preserve downloads and Later 
   await flush();
   await app.clock.advance(interval * 2);
   assert.equal(app.manager.getState(), downloaded);
-  assert.equal(app.checkCalls, 2);
+  assert.equal(app.checkCalls, 4);
   assert.equal(app.updateWindows.length, 1);
   assert.equal(app.updateWindows[0].isDestroyed(), true);
 
   app.desktop.getMainWindow().close();
   app.electronApp.emit('second-instance');
   await flush();
-  assert.equal(app.updateWindows.length, 2);
-  assert.equal(app.updateWindows[1].isVisible(), true);
-  app.updateWindows[1].close();
+  assert.equal(app.updateWindows.length, 1);
+  assert.equal(app.updateWindows[0].isDestroyed(), true);
   await flush();
 });
 
@@ -575,6 +545,59 @@ test('quitting clears the periodic timer and queued ticks cannot restart checks'
   assert.equal(app.clock.scheduled.length, 1);
 });
 
+test('simultaneous shortcut, tray, and activation opens do not duplicate or reset the session prompt', async () => {
+  const app = createHarness();
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  app.electronApp.emit('second-instance');
+  app.trays[0].emit('double-click');
+  app.electronApp.emit('activate');
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  app.updateWindows[0].close();
+  await flush();
+  app.electronApp.emit('second-instance');
+  app.trays[0].emit('double-click');
+  app.electronApp.emit('activate');
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  assert.equal(app.updateWindows[0].isDestroyed(), true);
+  assert.deepEqual(app.errors, []);
+});
+
+test('Skip survives real main-process settings wiring and newer periodic downloads prompt in the tray', async () => {
+  const settings = { backgroundMode: true };
+  const first = createHarness({ settings });
+  await first.ready();
+  first.updater.emit('update-downloaded', { version: '2.0.1' });
+  await flush();
+  first.updateWindows[0].webContents.emit('ipc-message', {}, UPDATE_DIALOG_ACTION_CHANNEL, 'skip');
+  await flush();
+  assert.equal(settings.skippedUpdateVersion, '2.0.1');
+  assert.equal(Object.hasOwn(settings, 'promptedVersions'), false);
+  first.electronApp.emit('will-quit');
+  const second = createHarness({ settings });
+  await second.ready();
+  second.updater.emit('update-downloaded', { version: '2.0.1' });
+  await flush();
+  assert.equal(second.updateWindows.length, 0);
+  second.desktop.getMainWindow().close();
+  second.trays[0].emit('double-click');
+  await flush();
+  assert.equal(second.updateWindows.length, 0);
+  second.desktop.getMainWindow().close();
+  second.setCheck(async () => ({ isUpdateAvailable: true, updateInfo: { version: '2.0.2' } }));
+  await second.clock.advance(43_200_000);
+  assert.equal(second.manager.getState().version, '2.0.2');
+  second.updater.emit('update-downloaded', { version: '2.0.2' });
+  await flush();
+  assert.equal(second.updateWindows.length, 1);
+  assert.equal(second.updateWindows[0].options.parent, undefined);
+  second.updateWindows[0].close();
+  await flush();
+  assert.equal(settings.skippedUpdateVersion, '2.0.1');
+});
+
 test('quitting during updater initialization prevents a late timer or startup check', async () => {
   const initialization = deferred();
   const app = createHarness({ initialization: initialization.promise });
@@ -588,7 +611,7 @@ test('quitting during updater initialization prevents a late timer or startup ch
 });
 
 test('disabled or failed updater initialization does not schedule periodic checks', async () => {
-  for (const options of [{ isPackaged: false }, { initializationError: new Error('load failed') }]) {
+  for (const options of [{ isPackaged: false }, { env: { PORTABLE_EXECUTABLE_FILE: 'SnapOverLAN.exe' } }, { initializationError: new Error('load failed') }]) {
     const app = createHarness(options);
     await app.ready();
     app.electronApp.emit('second-instance');

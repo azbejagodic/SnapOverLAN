@@ -55,6 +55,8 @@ const createUpdateDialogController = ({
   preloadPath = DEFAULT_PRELOAD_PATH,
   rendererPath = DEFAULT_RENDERER_PATH,
   requestInstall,
+  getSkippedVersion = () => '',
+  saveSkippedVersion = async () => {},
 } = {}) => {
   const promptedVersions = new Set();
   let activePrompt = null;
@@ -126,6 +128,25 @@ const createUpdateDialogController = ({
       updateWindow.webContents.on('ipc-message', (_event, channel, action) => {
         if (channel !== UPDATE_DIALOG_ACTION_CHANNEL || settled || requestingInstall) return;
         if (action === 'later') settle(0);
+        if (action === 'skip') {
+          requestingInstall = true;
+          void (async () => {
+            try {
+              await saveSkippedVersion(version);
+              requestingInstall = false;
+              settle(0);
+            } catch {
+              warn('The skipped update version could not be saved.');
+              await showMessageBox({
+                type: 'error', title: 'SnapOverLAN Update',
+                message: 'This version could not be skipped.',
+                detail: 'Please try again. Later dismisses it for this session.',
+                buttons: ['OK'], noLink: true,
+              });
+            }
+          })().catch(() => warn('The update preference error dialog could not be shown.'))
+            .finally(() => { requestingInstall = false; });
+        }
         if (action === 'restart') {
           requestingInstall = true;
           void (async () => {
@@ -157,7 +178,7 @@ const createUpdateDialogController = ({
     }
   });
 
-  const promptDownloadedUpdate = (state, { userInitiated = false } = {}) => {
+  const promptDownloadedUpdate = (state, { userInitiated = false, manualCheck = false } = {}) => {
     const version = typeof state?.version === 'string' && VERSION_PATTERN.test(state.version)
       ? state.version
       : '';
@@ -167,6 +188,7 @@ const createUpdateDialogController = ({
       || activePrompt
       || state?.status !== 'downloaded'
       || !version
+      || (!manualCheck && getSkippedVersion() === version)
       || (!userInitiated && promptedVersions.has(version))
     ) {
       return activePrompt || Promise.resolve(false);
@@ -193,9 +215,10 @@ const createUpdateDialogController = ({
       if (activeWindow && !activeWindow.isDestroyed()) activeWindow.destroy();
       activeWindow = null;
     },
-    // State events prompt once per version; only an explicit open may re-present it.
+    // Tray/window opens are part of the same process session, not manual checks.
     handleState: (state) => promptDownloadedUpdate(state),
-    handleUserOpen: (state) => promptDownloadedUpdate(state, { userInitiated: true }),
+    handleUserOpen: (state) => promptDownloadedUpdate(state),
+    handleManualCheck: (state) => promptDownloadedUpdate(state, { userInitiated: true, manualCheck: true }),
   });
 };
 

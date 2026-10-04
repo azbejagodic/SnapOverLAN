@@ -90,6 +90,8 @@ const createController = ({
   getMainWindow = () => null,
   logger = { warn() {} },
   requestInstall = async () => true,
+  getSkippedVersion,
+  saveSkippedVersion,
 } = {}) => {
   FakeBrowserWindow.instances = [];
   return {
@@ -101,6 +103,8 @@ const createController = ({
       preloadPath,
       rendererPath,
       requestInstall,
+      getSkippedVersion,
+      saveSkippedVersion,
     }),
     dialog,
   };
@@ -192,7 +196,7 @@ test('fresh downloads prompt once and repeated state events stay dismissed after
 });
 
 for (const dismissal of ['later', 'close']) {
-  test(`${dismissal} allows the same downloaded version on a future explicit open`, async () => {
+  test(`${dismissal} allows the same downloaded version on a future manual check`, async () => {
     let installCalls = 0;
     const { controller } = createController({
       requestInstall: async () => { installCalls += 1; return true; },
@@ -206,8 +210,8 @@ for (const dismissal of ['later', 'close']) {
     await controller.handleState(downloadedState());
     assert.equal(FakeBrowserWindow.instances.length, 1);
 
-    const reopened = controller.handleUserOpen(downloadedState());
-    assert.equal(controller.handleUserOpen(downloadedState()), reopened);
+    const reopened = controller.handleManualCheck(downloadedState());
+    assert.equal(controller.handleManualCheck(downloadedState()), reopened);
     assert.equal(controller.handleState(downloadedState()), reopened);
     const nextWindow = await waitForWindow(1);
     assert.equal(FakeBrowserWindow.instances.length, 2);
@@ -221,7 +225,7 @@ for (const dismissal of ['later', 'close']) {
 
 test('active prompts block concurrent user opens and state events for any version', async () => {
   const { controller } = createController();
-  const prompt = controller.handleUserOpen(downloadedState());
+  const prompt = controller.handleManualCheck(downloadedState());
   assert.equal(controller.handleUserOpen(downloadedState('2.0.2')), prompt);
   assert.equal(controller.handleState(downloadedState('2.0.2')), prompt);
   const window = await waitForWindow();
@@ -259,7 +263,7 @@ test('Restart & Update requests the existing installation path only once', async
   assert.equal(await prompt, true);
   choose(window, 'restart');
   await controller.handleState(downloadedState());
-  await controller.handleUserOpen(downloadedState());
+  await controller.handleManualCheck(downloadedState());
   assert.equal(installCalls, 1);
   assert.equal(FakeBrowserWindow.instances.length, 1);
 });
@@ -279,6 +283,69 @@ test('an explicit installation failure keeps the sanitized native error fallback
   assert.deepEqual(dialog.calls[0], [INSTALL_ERROR_DIALOG_OPTIONS]);
   assert.equal(dialog.calls[0][0].message, 'The update could not be installed.');
   assert.equal(dialog.calls[0][0].detail, 'Please restart SnapOverLAN and try again.');
+});
+
+test('Later is process-local and a fresh controller may show the same version', async () => {
+  const first = createController().controller;
+  const prompt = first.handleState(downloadedState());
+  choose(await waitForWindow(), 'later');
+  await prompt;
+  await first.handleState(downloadedState());
+  assert.equal(FakeBrowserWindow.instances.length, 1);
+  first.dispose();
+  const second = createController().controller;
+  const fresh = second.handleState(downloadedState());
+  choose(await waitForWindow(), 'later');
+  await fresh;
+});
+
+test('Skip persists only the exact version; manual checking bypasses without clearing it', async () => {
+  let skippedVersion = '';
+  const options = {
+    getSkippedVersion: () => skippedVersion,
+    saveSkippedVersion: async (version) => { skippedVersion = version; },
+  };
+  const first = createController(options).controller;
+  const prompt = first.handleState(downloadedState());
+  const window = await waitForWindow();
+  choose(window, 'skip');
+  choose(window, 'restart');
+  await prompt;
+  assert.equal(window.isDestroyed(), true);
+  assert.equal(skippedVersion, '2.0.1');
+  first.dispose();
+  const second = createController(options).controller;
+  await second.handleState(downloadedState());
+  await second.handleUserOpen(downloadedState());
+  assert.equal(FakeBrowserWindow.instances.length, 0);
+  const manual = second.handleManualCheck(downloadedState());
+  assert.equal(second.handleManualCheck(downloadedState()), manual);
+  choose(await waitForWindow(), 'later');
+  await manual;
+  assert.equal(skippedVersion, '2.0.1');
+  await second.handleState(downloadedState());
+  assert.equal(FakeBrowserWindow.instances.length, 1);
+  const newer = second.handleState(downloadedState('2.0.2'));
+  choose(await waitForWindow(1), 'later');
+  await newer;
+  assert.equal(skippedVersion, '2.0.1');
+});
+
+test('a failed skip save keeps the prompt open and allows retry', async () => {
+  let attempts = 0;
+  const { controller, dialog } = createController({
+    saveSkippedVersion: async () => { if (++attempts === 1) throw new Error('disk full'); },
+  });
+  const prompt = controller.handleState(downloadedState());
+  const window = await waitForWindow();
+  choose(window, 'skip');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(window.isDestroyed(), false);
+  assert.equal(dialog.calls.length, 1);
+  choose(window, 'skip');
+  await prompt;
+  assert.equal(attempts, 2);
+  assert.equal(window.isDestroyed(), true);
 });
 
 test('blocked Restart keeps the same window open, suppresses overlapping clicks, and retries only on another click', async () => {
@@ -351,7 +418,8 @@ test('the popup renderer matches existing UI tokens and exposes only a narrow ac
   assert.match(html, /<h1 id="updateTitle">Update ready!<\/h1>/);
   assert.match(html, /A new version of SnapOverLAN is ready to install\./);
   assert.match(html, />Later<\/button>/);
-  assert.match(html, />Restart &amp; Update<\/button>/);
+  assert.match(html, />Skip this version<\/button>/);
+  assert.match(html, />Update now<\/button>/);
   assert.match(html, /Content-Security-Policy/);
   assert.match(css, /--bg: #343940/);
   assert.match(css, /--radius-lg: 22px/);
@@ -362,10 +430,11 @@ test('the popup renderer matches existing UI tokens and exposes only a narrow ac
   assert.match(css, /linear-gradient\(145deg, #c7f7ff, #91e4f2\)/);
   assert.match(renderer, /Restart now to update to version \$\{normalizedVersion\}\./);
   assert.match(renderer, /chooseAction\('later'\)/);
+  assert.match(renderer, /chooseAction\('skip'\)/);
   assert.match(renderer, /chooseAction\('restart'\)/);
   assert.match(renderer, /restartButton\.focus\(\)/);
   assert.doesNotMatch(renderer, /laterButton\.focus\(\)/);
-  assert.match(preload, /ALLOWED_ACTIONS = new Set\(\['later', 'restart'\]\)/);
+  assert.match(preload, /ALLOWED_ACTIONS = new Set\(\['later', 'restart', 'skip'\]\)/);
   assert.match(preload, /ipcRenderer\.send\(UPDATE_DIALOG_ACTION_CHANNEL, action\)/);
   assert.doesNotMatch(preload, /autoUpdater|checkForUpdates|quitAndInstall|update-manager/);
   assert.doesNotMatch(controller, /ipcMain|contextBridge|ipcRenderer/);

@@ -153,7 +153,7 @@ h1 {
 }
 
 .update-button.primary {
-  min-width: 142px;
+  min-width: 100px;
   background: linear-gradient(145deg, #c7f7ff, #91e4f2);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
 }

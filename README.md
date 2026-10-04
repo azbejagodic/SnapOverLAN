@@ -44,7 +44,7 @@ The current build is unsigned, so Windows may show **Unknown publisher** in the 
 
 Phone and PC must be reachable on the same local network. Open **QR** in SnapOverLAN and scan it with the phone, or open the displayed address in the phone's browser. A `.local` address is available when mDNS discovery is running; the direct LAN IP shown in **Server diagnostics** is the reliable fallback when `.local` does not work.
 
-On Windows, the network must be set to **Private** for SnapOverLAN's firewall rules to allow phone access. See [Windows network profile](#windows-network-profile) below. Clean-laptop and hotspot acceptance testing is still pending.
+On Windows, the network must be set to **Private** for SnapOverLAN's firewall rules to allow phone access. See [Windows network profile](#windows-network-profile) below.
 
 ### Portable app
 

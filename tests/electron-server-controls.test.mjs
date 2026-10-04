@@ -220,7 +220,7 @@ test('updater initialization starts after the visible desktop is ready and canno
   const updaterStarted = mainSource.indexOf('void checkForUpdates();', windowShown);
   const fatalCatch = mainSource.indexOf("dialog.showErrorBox('SnapOverLAN could not start'", updaterStarted);
   const initializeStart = mainSource.indexOf('const initializeUpdateManager = () =>');
-  const checkStart = mainSource.indexOf('await updateManager?.checkForUpdates();', initializeStart);
+  const checkStart = mainSource.indexOf('await updateManager?.checkForUpdates({ checkDownloaded: periodic });', initializeStart);
 
   assert.ok(readyStart >= 0);
   assert.ok(windowShown > readyStart);

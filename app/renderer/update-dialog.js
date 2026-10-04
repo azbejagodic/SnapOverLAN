@@ -4,6 +4,7 @@ const normalizedVersion = VERSION_PATTERN.test(version) ? version : '';
 
 const detail = document.getElementById('updateDetail');
 const laterButton = document.getElementById('laterButton');
+const skipButton = document.getElementById('skipButton');
 const restartButton = document.getElementById('restartButton');
 
 detail.textContent = normalizedVersion
@@ -12,6 +13,9 @@ detail.textContent = normalizedVersion
 
 laterButton.addEventListener('click', () => {
   window.snapOverLanUpdateDialog.chooseAction('later');
+});
+skipButton.addEventListener('click', () => {
+  window.snapOverLanUpdateDialog.chooseAction('skip');
 });
 
 restartButton.addEventListener('click', () => {

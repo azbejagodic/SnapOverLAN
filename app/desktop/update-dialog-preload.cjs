@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const UPDATE_DIALOG_ACTION_CHANNEL = 'snapoverlan:update-dialog-action';
-const ALLOWED_ACTIONS = new Set(['later', 'restart']);
+const ALLOWED_ACTIONS = new Set(['later', 'restart', 'skip']);
 
 contextBridge.exposeInMainWorld('snapOverLanUpdateDialog', Object.freeze({
   chooseAction(action) {

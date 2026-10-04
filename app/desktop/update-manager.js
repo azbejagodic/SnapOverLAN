@@ -137,7 +137,9 @@ const createUpdateManager = ({
       publishState(createState('checking'));
     },
     'update-available': (info) => {
-      if (!updaterAvailable || ['downloading', 'downloaded'].includes(state.status)) return;
+      if (!updaterAvailable || state.status === 'downloading') return;
+      if (!normalizeVersion(info?.version)) return;
+      if (state.status === 'downloaded' && normalizeVersion(info?.version) === state.version) return;
       publishState(createState('available', { version: info?.version }));
     },
     'update-not-available': (info) => {
@@ -174,14 +176,15 @@ const createUpdateManager = ({
     warn(state.message);
   }
 
-  const checkForUpdates = () => {
+  const checkForUpdates = ({ checkDownloaded = false } = {}) => {
     if (disposed || !updaterAvailable) return Promise.resolve(state);
     if (checkOperation) return checkOperation;
-    if (['downloading', 'downloaded'].includes(state.status)) {
+    if (installStarted || state.status === 'downloading' || (state.status === 'downloaded' && !checkDownloaded)) {
       return Promise.resolve(state);
     }
 
-    publishState(createState('checking'));
+    // Keep a ready update installable during periodic discovery of newer releases.
+    if (state.status !== 'downloaded') publishState(createState('checking'));
     const operation = Promise.resolve()
       .then(() => updater.checkForUpdates())
       .then((result) => {
@@ -189,7 +192,9 @@ const createUpdateManager = ({
         void result?.downloadPromise?.catch((error) => {
           if (!disposed && state.status !== 'error') publishError(error);
         });
-        if (state.status === 'checking' && result?.isUpdateAvailable === true) {
+        if ((state.status === 'checking'
+          || (state.status === 'downloaded' && normalizeVersion(result?.updateInfo?.version)
+            && result.updateInfo.version !== state.version)) && result?.isUpdateAvailable === true) {
           publishState(createState('available', { version: result.updateInfo?.version }));
         } else if (state.status === 'checking' && result?.isUpdateAvailable === false) {
           publishState(createState('not-available', { version: result.updateInfo?.version }));

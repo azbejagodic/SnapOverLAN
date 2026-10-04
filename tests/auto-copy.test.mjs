@@ -142,10 +142,12 @@ test('desktop settings default and migrate auto-copy safely', () => {
   assert.deepEqual(DEFAULT_DESKTOP_SETTINGS, {
     backgroundMode: false,
     autoCopyFirstPhoto: false,
+    skippedUpdateVersion: '',
   });
   assert.deepEqual(normalizeDesktopSettings({ backgroundMode: true }), {
     backgroundMode: true,
     autoCopyFirstPhoto: false,
+    skippedUpdateVersion: '',
   });
   assert.deepEqual(normalizeDesktopSettings(null), DEFAULT_DESKTOP_SETTINGS);
 });
@@ -156,6 +158,7 @@ test('saving auto-copy preserves the Background Mode setting', () => {
     {
       backgroundMode: true,
       autoCopyFirstPhoto: true,
+      skippedUpdateVersion: '',
     },
   );
 });

@@ -46,6 +46,7 @@ let serverState = 'offline';
 let serverError = '';
 let backgroundMode = false;
 let autoCopyFirstPhoto = false;
+let skippedUpdateVersion = '';
 let quitOperation = null;
 const activeBatchExports = new Set();
 let allowQuit = false;
@@ -67,12 +68,14 @@ const getStartupLogPath = () => path.join(electronApp.getPath('userData'), 'star
 const getDesktopSettings = () => ({
   backgroundMode,
   autoCopyFirstPhoto,
+  skippedUpdateVersion,
 });
 
 const applyDesktopSettings = (settings) => {
   const normalized = normalizeDesktopSettings(settings);
   backgroundMode = normalized.backgroundMode;
   autoCopyFirstPhoto = normalized.autoCopyFirstPhoto;
+  skippedUpdateVersion = normalized.skippedUpdateVersion;
 };
 
 const writeStartupLog = async (event, details = {}) => {
@@ -131,6 +134,16 @@ const initializeUpdateManager = () => {
       BrowserWindow,
       dialog,
       getMainWindow: () => desktopShell.getMainWindow(),
+      getSkippedVersion: () => skippedUpdateVersion,
+      saveSkippedVersion: async (version) => {
+        const previousVersion = skippedUpdateVersion;
+        skippedUpdateVersion = version;
+        try { await saveSettings(); }
+        catch (error) {
+          skippedUpdateVersion = previousVersion;
+          throw error;
+        }
+      },
       logger: {
         warn: (message) => console.warn('SnapOverLAN updater:', message),
       },
@@ -145,8 +158,8 @@ const initializeUpdateManager = () => {
     });
     void updateDialogController.handleState(updateManager.getState());
     if (updateManager.isEnabled()) {
-      // Periodic checks never re-present a dismissed update; only user opens do.
-      updateCheckTimer = setInterval(() => { void checkForUpdates(); }, UPDATE_CHECK_INTERVAL_MS);
+      // Periodic checks preserve process dismissal state, including in the tray.
+      updateCheckTimer = setInterval(() => { void checkForUpdates({ periodic: true }); }, UPDATE_CHECK_INTERVAL_MS);
       updateCheckTimer.unref();
     }
   })().catch(() => {
@@ -155,7 +168,7 @@ const initializeUpdateManager = () => {
   return updateManagerInitialization;
 };
 
-const checkForUpdates = async ({ userInitiated = false } = {}) => {
+const checkForUpdates = async ({ userInitiated = false, periodic = false } = {}) => {
   try {
     if (updaterDisposed) return;
     await initializeUpdateManager();
@@ -165,7 +178,7 @@ const checkForUpdates = async ({ userInitiated = false } = {}) => {
     if (userInitiated && updateManager) {
       void updateDialogController?.handleUserOpen(updateManager.getState());
     }
-    await updateManager?.checkForUpdates();
+    await updateManager?.checkForUpdates({ checkDownloaded: periodic });
   } catch {
     console.warn('SnapOverLAN updater: An unexpected update check failure was contained.');
   }

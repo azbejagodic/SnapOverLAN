@@ -299,6 +299,40 @@ test('Later is process-local and a fresh controller may show the same version', 
   await fresh;
 });
 
+test('explicit opens bypass Later and still respect Skip without changing the saved version', async () => {
+  let skippedVersion = '';
+  const { controller } = createController({ getSkippedVersion: () => skippedVersion });
+  const initial = controller.handleState(downloadedState());
+  choose(await waitForWindow(), 'later');
+  await initial;
+  const reopened = controller.handleUserOpen(downloadedState());
+  assert.equal(controller.handleUserOpen(downloadedState()), reopened);
+  choose(await waitForWindow(1), 'later');
+  await reopened;
+  await controller.handleState(downloadedState());
+  assert.equal(FakeBrowserWindow.instances.length, 2);
+  skippedVersion = '2.0.1';
+  await controller.handleUserOpen(downloadedState());
+  assert.equal(FakeBrowserWindow.instances.length, 2);
+  const newer = controller.handleUserOpen(downloadedState('2.0.2'));
+  choose(await waitForWindow(2), 'later');
+  await newer;
+  assert.equal(skippedVersion, '2.0.1');
+});
+
+for (const status of ['not-available', 'error', 'disabled']) {
+  test(`a ${status} result clears pending manual-open intent before later automatic downloads`, async () => {
+    const { controller } = createController();
+    const initial = controller.handleState(downloadedState());
+    choose(await waitForWindow(), 'later');
+    await initial;
+    await controller.handleUserOpen({ status: 'checking' });
+    await controller.handleState({ status });
+    await controller.handleState(downloadedState());
+    assert.equal(FakeBrowserWindow.instances.length, 1);
+  });
+}
+
 test('Skip persists only the exact version; manual checking bypasses without clearing it', async () => {
   let skippedVersion = '';
   const options = {

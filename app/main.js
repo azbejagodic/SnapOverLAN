@@ -178,7 +178,7 @@ const checkForUpdates = async ({ userInitiated = false, periodic = false } = {})
     if (userInitiated && updateManager) {
       void updateDialogController?.handleUserOpen(updateManager.getState());
     }
-    await updateManager?.checkForUpdates({ checkDownloaded: periodic });
+    await updateManager?.checkForUpdates({ checkDownloaded: periodic || userInitiated });
   } catch {
     console.warn('SnapOverLAN updater: An unexpected update check failure was contained.');
   }

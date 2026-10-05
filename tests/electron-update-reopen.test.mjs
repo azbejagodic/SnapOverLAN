@@ -399,7 +399,7 @@ test('manual open intent survives a delayed download of a version dismissed with
   app.updateWindows[1].close();
   await flush();
   app.updater.emit('update-downloaded', { version: '2.0.1' });
-  await app.clock.advance(43_200_000);
+  await app.clock.advance(app.clock.scheduled[0].interval);
   assert.equal(app.updateWindows.length, 2, 'manual intent is consumed once');
 });
 
@@ -507,13 +507,13 @@ test('updates found on reopen retain auto-download and forward readiness to the 
   assert.equal(app.dialogStates.at(-1).version, '9.0.0');
 });
 
-test('periodic checks start at 12 hours and continue at subsequent intervals in background mode', async () => {
+test('periodic checks start at 5 minutes and continue at subsequent intervals in background mode', async () => {
   const app = createHarness();
   await app.ready();
   assert.equal(app.checkCalls, 1);
   assert.equal(app.clock.scheduled.length, 1);
   const { interval } = app.clock.scheduled[0];
-  assert.equal(interval, 43_200_000);
+  assert.equal(interval, 300_000);
   app.desktop.getMainWindow().close();
   await app.clock.advance(interval - 1);
   assert.equal(app.checkCalls, 1);
@@ -676,7 +676,7 @@ test('Skip survives real main-process settings wiring and newer periodic downloa
   assert.equal(second.updateWindows.length, 0);
   second.desktop.getMainWindow().close();
   second.setCheck(async () => ({ isUpdateAvailable: true, updateInfo: { version: '2.0.2' } }));
-  await second.clock.advance(43_200_000);
+  await second.clock.advance(300_000);
   assert.equal(second.manager.getState().version, '2.0.2');
   second.updater.emit('update-downloaded', { version: '2.0.2' });
   await flush();

@@ -37,7 +37,7 @@ const appIconPath = path.join(projectRoot, 'assets', 'electron', 'app-512.png');
 const trayIconPath = path.join(projectRoot, 'assets', 'electron', 'tray-24.png');
 
 const PORT = 8787;
-const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const SERVER_ORIGIN = `http://localhost:${PORT}`;
 const rendererServerRequest = createRendererServerClient({ serverOrigin: SERVER_ORIGIN });
 electronApp.setName('SnapOverLAN');

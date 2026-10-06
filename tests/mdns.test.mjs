@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import dnsPacket from 'dns-packet';
+import { Bonjour } from 'bonjour-service';
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -17,7 +18,7 @@ const {
   getDeviceIdPath,
   getOrCreateDeviceId,
 } = await import('../app/server/device-identity.js');
-const { createMdnsAdvertiser } = await import('../app/server/mdns.js');
+const { createMdnsAdvertiser, getMdnsIpv6Interface } = await import('../app/server/mdns.js');
 const { getPhoneUrlRecords, getPreferredLanIpv4Address } = await import('../app/server/lan.js');
 const { startServer, stopServer } = await import('../app/server/index.js');
 const { QR_MAX_UTF8_BYTES } = await import('../app/renderer/qr-code.js');
@@ -26,7 +27,7 @@ const rendererSource = await fs.readFile(
   'utf8',
 );
 
-const createDecodedHostnameQuery = ({ hostname, qtype = 'A', qu = false }) => {
+const createDecodedHostnameQuery = ({ hostname, qtype = 'A', qu = false, allQu = false, encodedResult = false }) => {
   const questions = [
     { name: hostname, type: 'UNKNOWN_65', class: 'IN' },
     { name: hostname, type: 'AAAA', class: 'IN' },
@@ -36,15 +37,46 @@ const createDecodedHostnameQuery = ({ hostname, qtype = 'A', qu = false }) => {
   let offset = 12;
   for (const question of questions) {
     offset += dnsPacket.name.encodingLength(question.name) + 2;
-    if (qu && question.type === qtype) {
+    if (allQu || (qu && question.type === qtype)) {
       encoded.writeUInt16BE(encoded.readUInt16BE(offset) | 0x8000, offset);
     }
     offset += 2;
   }
-  return dnsPacket.decode(encoded);
+  return encodedResult ? encoded : dnsPacket.decode(encoded);
 };
 
-const createAdvertiserFixture = async ({ debug = false, useEnvironment = false } = {}) => {
+// Exercise the installed Bonjour/multicast-dns stack without opening UDP sockets.
+const createSocketHarness = ({ failIpv6 = false } = {}) => {
+  const sockets = [];
+  class FakeSocket extends EventEmitter {
+    constructor(options) { super(); this.options = options; this.sent = []; this.memberships = []; this.dropped = []; this.closed = false; sockets.push(this); }
+    bind(port, address, callback) {
+      this.bound = { port, address };
+      setImmediate(() => {
+        if (failIpv6 && this.options.type === 'udp6') {
+          this.emit('error', Object.assign(new Error('IPv6 port unavailable'), { code: 'EADDRINUSE' }));
+        } else { this.emit('listening'); callback(); }
+      });
+    }
+    address() { return this.bound; }
+    addMembership(group, iface) { this.memberships.push({ group, iface }); }
+    dropMembership(group, iface) { this.dropped.push({ group, iface }); }
+    setMulticastInterface(iface) { this.outgoingInterface = iface; }
+    setMulticastTTL(ttl) { this.ttl = ttl; }
+    setMulticastLoopback() {}
+    send(buffer, _offset, _length, port, address, callback) {
+      this.sent.push({ packet: dnsPacket.decode(buffer), port, address });
+      setImmediate(() => callback?.());
+    }
+    close(callback) { this.closed = true; setImmediate(() => callback?.()); }
+  }
+  class SocketBonjour extends Bonjour {
+    constructor(options, onError) { super({ ...options, socket: options.socket || new FakeSocket({ type: 'udp4', reuseAddr: true }) }, onError); }
+  }
+  return { sockets, BonjourClass: SocketBonjour, socketFactory: (options) => new FakeSocket(options) };
+};
+
+const createAdvertiserFixture = async ({ debug = false, useEnvironment = false, ipv6Interface = '' } = {}) => {
   const events = [];
   const logs = [];
   const publications = [];
@@ -55,10 +87,15 @@ const createAdvertiserFixture = async ({ debug = false, useEnvironment = false }
   let socketWarning = null;
   let service = null;
   let mdnsSocket = null;
+  const sockets = [];
+  const optionsByTransport = [];
+  const services = [];
+  const socketOptions = [];
 
   class FakeBonjour {
     constructor(options, onWarning) {
       constructorOptions = options;
+      optionsByTransport.push(options);
       socketWarning = onWarning;
       mdnsSocket = new EventEmitter();
       mdnsSocket.respond = (packet, destinationOrCallback, responseCallback) => {
@@ -71,6 +108,7 @@ const createAdvertiserFixture = async ({ debug = false, useEnvironment = false }
         callback?.(responseError);
       };
       this.server = { mdns: mdnsSocket };
+      sockets.push(mdnsSocket);
     }
 
     publish(options) {
@@ -81,8 +119,12 @@ const createAdvertiserFixture = async ({ debug = false, useEnvironment = false }
         { name: options.host, type: 'A', data: '26.10.20.30' },
         { name: options.host, type: 'AAAA', data: 'fe80::1' },
         { name: `${options.name}._http._tcp.local`, type: 'SRV', data: { target: options.host } },
+        { name: '_http._tcp.local', type: 'PTR', data: `${options.name}._http._tcp.local` },
+        { name: `${options.name}._http._tcp.local`, type: 'TXT', data: ['application=SnapOverLAN'] },
       ];
-      setImmediate(() => service.emit('up'));
+      services.push(service);
+      const published = service;
+      setImmediate(() => published.emit('up'));
       return service;
     }
 
@@ -99,6 +141,8 @@ const createAdvertiserFixture = async ({ debug = false, useEnvironment = false }
 
   const advertiserOptions = {
     BonjourClass: FakeBonjour,
+    getIpv6Interface: () => ipv6Interface,
+    socketFactory: (options) => { socketOptions.push(options); return {}; },
     deviceId: 'a1b2c3d4',
     getLanAddresses: () => [
       { address: '192.168.1.25', private: true },
@@ -126,6 +170,7 @@ const createAdvertiserFixture = async ({ debug = false, useEnvironment = false }
     setResponseError: (error) => { responseError = error; },
     status,
     warnings,
+    sockets, services, optionsByTransport, socketOptions,
   };
 };
 
@@ -209,6 +254,7 @@ test('mDNS service leaves hostname A/AAAA ownership to the explicit responder', 
     deviceId: 'a1b2c3d4',
     hostname: 'snap-a1b2c3d4.local',
     ipv4Addresses: ['192.168.1.25'],
+    ipv6Interface: '',
     port: 8787,
     stableUrl: 'http://snap-a1b2c3d4.local:8787',
     started: true,
@@ -577,6 +623,59 @@ test('mDNS startup failure keeps the HTTP server and IP fallback working', async
   await stopServer();
 });
 
+test('IPv6 on the IPv4 endpoint adapter uses scoped membership and never unrelated adapters', () => {
+  const interfaces = {
+    unrelated: [{ address: '10.0.0.5', family: 'IPv4' }, { address: 'fe80::5', family: 'IPv6', scopeid: 5 }],
+    wifi: [{ address: '192.168.1.25', family: 'IPv4' }, { address: 'fe80::7', family: 'IPv6', scopeid: 7 }],
+  };
+  assert.equal(getMdnsIpv6Interface('192.168.1.25', interfaces, 'win32'), '::%7');
+  assert.equal(getMdnsIpv6Interface('192.168.1.25', interfaces, 'linux'), '::%wifi');
+  assert.equal(getMdnsIpv6Interface('192.168.1.99', interfaces, 'win32'), '');
+  interfaces.wifi[1].internal = true;
+  assert.equal(getMdnsIpv6Interface('192.168.1.25', interfaces, 'win32'), '');
+});
+
+test('dual transports answer IPv6 QM, QU and the captured combined iPhone query with IPv4 A only', async () => {
+  const h = await createAdvertiserFixture({ ipv6Interface: '::%7' });
+  const hostname = h.status.hostname;
+  const remote = { address: 'fe80::abcd%7', port: 5353 };
+  assert.equal(h.sockets.length, 2);
+  assert.deepEqual(h.socketOptions, [{ type: 'udp6', reuseAddr: true, ipv6Only: true }]);
+  assert.deepEqual(h.optionsByTransport[1], {
+    type: 'udp6', bind: '::', ip: 'ff02::fb', interface: '::%7', socket: {},
+  });
+  for (const service of h.services) {
+    assert.deepEqual(service.records().map(({ type }) => type), ['SRV', 'PTR', 'TXT']);
+  }
+  h.sockets[1].emit('query', createDecodedHostnameQuery({ hostname }), remote);
+  assert.equal(h.responses.length, 2);
+  assert.equal(h.responses[0].destination, null, 'QM uses this transport multicast');
+  assert.deepEqual(h.responses[1].destination, remote);
+  const query = createDecodedHostnameQuery({ hostname, qu: true });
+  // All three questions in the captured packet requested unicast.
+  for (const question of query.questions) question.class = 'UNKNOWN_32769';
+  h.sockets[1].emit('query', query, remote);
+  assert.equal(h.responses.length, 3);
+  assert.deepEqual(h.responses[2].destination, remote, 'QU retains IPv6 scope and port');
+  h.sockets[1].emit('query', { questions: [
+    { name: hostname, type: 'AAAA' }, { name: hostname, type: 'UNKNOWN_65' },
+    { name: 'other.local', type: 'A' },
+  ] }, remote);
+  assert.equal(h.responses.length, 3, 'unsupported and unrelated questions are not answered');
+  for (const { packet } of h.responses) {
+    assert.equal(packet.answers.length, 1);
+    assert.equal(packet.answers[0].type, 'A');
+    assert.equal(packet.answers[0].data, '192.168.1.25');
+  }
+  await Promise.all([h.advertiser.start(), h.advertiser.start()]);
+  assert.equal(h.sockets.length, 2, 'unchanged/repeated starts do not duplicate sockets');
+  await h.advertiser.stop();
+  assert.deepEqual(h.events, ['unpublish', 'unpublish', 'destroy', 'destroy']);
+  for (const socket of h.sockets) assert.equal(socket.listenerCount('query'), 0);
+  await h.advertiser.stop();
+  assert.equal(h.events.length, 4, 'shutdown is idempotent');
+});
+
 test('Public-network loopback mode exposes no LAN URLs and never starts mDNS', async (t) => {
   t.mock.method(os, 'networkInterfaces', () => ({ wifi: [{
     family: 'IPv4', internal: false, address: '192.168.1.20',
@@ -602,4 +701,106 @@ test('Public-network loopback mode exposes no LAN URLs and never starts mDNS', a
   assert.equal(status.primaryLanUrl, '');
   assert.equal(status.stableUrl, '');
   assert.equal(starts, 0);
+});
+
+test('installed multicast-dns joins both groups, routes IPv6 replies and cleans memberships after a startup race', async (t) => {
+  const harness = createSocketHarness();
+  const advertiser = createMdnsAdvertiser({
+    ...harness, deviceId: 'a1b2c3d4', getLanAddresses: () => [{ address: '192.168.1.25' }],
+    getIpv6Interface: () => '::%7', logger: { log() {}, warn() {} },
+  });
+  t.after(() => advertiser.stop());
+  const start = advertiser.start();
+  assert.equal(advertiser.start(), start);
+  await start;
+  const [v4, v6] = harness.sockets;
+  assert.deepEqual(v4.memberships, [{ group: '224.0.0.251', iface: '192.168.1.25' }]);
+  assert.deepEqual(v6.bound, { port: 5353, address: '::' });
+  assert.deepEqual(v6.memberships, [{ group: 'ff02::fb', iface: '::%7' }]);
+  assert.equal(v6.outgoingInterface, '::%7');
+  assert.equal(v6.ttl, 255);
+  const hostname = 'snap-a1b2c3d4.local';
+  const remote = { address: 'fe80::abcd%7', port: 5353 };
+  v6.sent.length = 0;
+  v6.emit('message', dnsPacket.encode(createDecodedHostnameQuery({ hostname })), remote);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(v6.sent[0].address, 'ff02::fb');
+  assert.equal(v6.sent[1].address, remote.address);
+  v6.emit('message', createDecodedHostnameQuery({ hostname, allQu: true, encodedResult: true }), remote);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(v6.sent[2].address, remote.address);
+  for (const { packet } of v6.sent) assert.deepEqual(packet.answers.map(({ type, data }) => ({ type, data })), [{ type: 'A', data: '192.168.1.25' }]);
+  v6.sent.length = 0;
+  v6.emit('message', dnsPacket.encode({ type: 'query', questions: [{ name: '_http._tcp.local', type: 'PTR' }] }), remote);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(v6.sent[0].packet.answers[0].type, 'PTR');
+  assert.deepEqual(v6.sent[0].packet.additionals.map(({ type }) => type).sort(), ['SRV', 'TXT']);
+  await advertiser.stop();
+  for (const socket of harness.sockets) {
+    assert.equal(socket.closed, true);
+    assert.deepEqual(socket.dropped, socket.memberships);
+  }
+  const restarting = advertiser.start();
+  const stopping = advertiser.stop();
+  await Promise.all([restarting, stopping]);
+  assert.equal(harness.sockets.length, 4);
+  assert.ok(harness.sockets.every((socket) => socket.closed), 'no late transport survives concurrent stop');
+});
+
+test('IPv6 startup failure closes both transports rather than leaving a partial advertiser', async () => {
+  const harness = createSocketHarness({ failIpv6: true });
+  const advertiser = createMdnsAdvertiser({
+    ...harness, deviceId: 'a1b2c3d4', getLanAddresses: () => [{ address: '192.168.1.25' }],
+    getIpv6Interface: () => '::%7', logger: { log() {}, warn() {} },
+  });
+  await assert.rejects(advertiser.start(), /IPv6 port unavailable/);
+  await advertiser.stop();
+  assert.equal(harness.sockets.length, 2);
+  assert.ok(harness.sockets.every((socket) => socket.closed));
+});
+
+test('IPv6 interface changes recreate both real-library transports; unchanged refresh does not duplicate them', async (t) => {
+  let scopeid = 7;
+  t.mock.method(os, 'networkInterfaces', () => ({ [scopeid === 7 ? 'wifi' : 'wifi-new']: [
+    { address: '192.168.1.25', family: 'IPv4', internal: false },
+    { address: 'fe80::25', family: 'IPv6', internal: false, scopeid },
+  ] }));
+  let monitor;
+  const originalSet = globalThis.setInterval;
+  const originalClear = globalThis.clearInterval;
+  const timer = { unref() {} };
+  t.mock.method(globalThis, 'setInterval', (callback, delay, ...args) => {
+    if (delay !== 15_000) return originalSet(callback, delay, ...args);
+    monitor = callback; return timer;
+  });
+  t.mock.method(globalThis, 'clearInterval', (value) => {
+    if (value !== timer) originalClear(value);
+  });
+  const harness = createSocketHarness();
+  const server = await startServer({ host: '127.0.0.1', port: 0, log: false,
+    mdnsFactory: (options) => createMdnsAdvertiser({ ...options, ...harness,
+      logger: { log() {}, warn() {} },
+    }),
+  });
+  t.after(() => stopServer());
+  monitor();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.sockets.length, 2);
+  scopeid = 8;
+  monitor();
+  monitor();
+  const endpoint = `http://127.0.0.1:${server.address().port}/api/server-status`;
+  for (let attempts = 0; attempts < 400; attempts += 1) {
+    const status = await fetch(endpoint).then((response) => response.json());
+    if (harness.sockets.length === 4 && status.stableUrl) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(harness.sockets.length, 4);
+  assert.ok(harness.sockets.slice(0, 2).every((socket) => socket.closed));
+  assert.deepEqual(harness.sockets[3].memberships, [{ group: 'ff02::fb', iface: process.platform === 'win32' ? '::%8' : '::%wifi-new' }]);
+  monitor();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.sockets.length, 4);
+  await stopServer();
+  assert.ok(harness.sockets.every((socket) => socket.closed));
 });

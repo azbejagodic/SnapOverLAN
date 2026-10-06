@@ -1,4 +1,6 @@
 import { Bonjour } from 'bonjour-service';
+import dgram from 'node:dgram';
+import os from 'node:os';
 import { PORT } from './config.js';
 import { formatDeviceHostname, formatStableUrl } from './device-identity.js';
 import { getLanIpv4Addresses, getPreferredLanIpv4Address } from './lan.js';
@@ -15,6 +17,20 @@ const DNS_CLASS_NAMES = new Map([
   [4, 'HS'],
   [255, 'ANY'],
 ]);
+
+// Join only the adapter owning the IPv4 HTTP endpoint, never unrelated adapters.
+const getMdnsIpv6Interface = (ipv4Address, interfaces = os.networkInterfaces(), platform = process.platform) => {
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    if (!addresses?.some((entry) => !entry.internal && entry.address === ipv4Address)) continue;
+    const ipv6 = addresses.find((entry) => !entry.internal
+      && (entry.family === 'IPv6' || entry.family === 6)
+      && /^fe80:/i.test(entry.address));
+    if (!ipv6) return '';
+    const scope = platform === 'win32' ? ipv6.scopeid : name;
+    return scope ? `::%${scope}` : '';
+  }
+  return '';
+};
 
 const removeBonjourHostAddressRecords = (service) => {
   if (typeof service?.records !== 'function') return;
@@ -65,6 +81,7 @@ const createHostnameResponder = ({
   ipv4Address,
   logger,
   mdnsSocket,
+  multicastAddress = MDNS_MULTICAST_ADDRESS,
 }) => {
   const answer = {
     name: hostname,
@@ -79,7 +96,7 @@ const createHostnameResponder = ({
     const direct = mode === 'unicast' || mode === 'compat-unicast';
     const destination = direct
       ? { address: remote.address, port: remote.port }
-      : { address: MDNS_MULTICAST_ADDRESS, port: MDNS_PORT };
+      : { address: multicastAddress, port: MDNS_PORT };
     const onSent = (error) => {
       const message = `SnapOverLAN mDNS A answer: hostname=${hostname} ipv4=${ipv4Address} `
         + `destination=${destination.address}:${destination.port} mode=${mode} `
@@ -105,7 +122,7 @@ const createHostnameResponder = ({
     let shouldSendMulticast = false;
     let shouldSendUnicast = false;
     for (const question of packet.questions || []) {
-      if (String(question.name).toLowerCase() !== hostname) continue;
+      if (String(question.name).toLowerCase().replace(/\.$/, '') !== hostname) continue;
       const classDetails = getQuestionClassDetails(question);
       debugLog(
         `SnapOverLAN mDNS query: hostname=${hostname} source=${remote.address || 'unknown'}:`
@@ -181,75 +198,93 @@ const createMdnsAdvertiser = ({
   debug = process.env.SNAPOVERLAN_DEBUG_MDNS === '1',
   deviceId,
   getLanAddresses = getLanIpv4Addresses,
+  getIpv6Interface = getMdnsIpv6Interface,
+  socketFactory = (options) => dgram.createSocket(options),
   logger = console,
   port = PORT,
   startupTimeoutMs = MDNS_STARTUP_TIMEOUT_MS,
 } = {}) => {
   const debugLog = createMdnsDebugLogger({ enabled: debug, logger });
-  let bonjour = null;
-  let detachQueryLogger = () => {};
+  const transports = [];
+  let starting = null;
+  let stopping = null;
   let status = null;
 
-  const stop = async () => {
-    const activeBonjour = bonjour;
-    bonjour = null;
+  const stopTransports = async () => {
+    const activeTransports = transports.splice(0);
     status = null;
-    detachQueryLogger();
-    detachQueryLogger = () => {};
-    if (!activeBonjour) return;
-    await waitForCallback((done) => activeBonjour.unpublishAll(done));
-    await waitForCallback((done) => activeBonjour.destroy(done));
+    for (const { bonjour, detach } of activeTransports) detach();
+    await Promise.all(activeTransports.map(async ({ bonjour }) => {
+      await waitForCallback((done) => bonjour.unpublishAll(done));
+      await waitForCallback((done) => bonjour.destroy(done));
+    }));
   };
 
-  const start = async () => {
+  const startTransports = async () => {
     if (status?.started) return status;
     const hostname = formatDeviceHostname(deviceId);
     const ipv4Address = getPreferredLanIpv4Address(getLanAddresses());
     if (!ipv4Address) throw new Error('No active LAN IPv4 address is available for mDNS.');
 
-    bonjour = new BonjourClass({
-      bind: '0.0.0.0',
-      interface: ipv4Address,
-    }, (error) => logger.warn('SnapOverLAN mDNS error:', error));
-    const mdnsSocket = bonjour.server?.mdns;
-    if (!mdnsSocket?.on || !mdnsSocket?.respond) {
-      await stop();
-      throw new Error('Bonjour did not expose its multicast-dns socket.');
-    }
-    detachQueryLogger = createHostnameResponder({
-      debugLog,
-      hostname,
-      ipv4Address,
-      logger,
-      mdnsSocket,
-    });
-
-    const service = bonjour.publish({
-      disableIPv6: true,
-      host: hostname,
-      name: `SnapOverLAN ${deviceId}`,
-      port,
-      protocol: 'tcp',
-      type: 'http',
-      txt: {
-        application: 'SnapOverLAN',
-        deviceId,
-        protocolVersion: '1',
-      },
-    });
-    // The explicit responder owns hostname A answers. Bonjour remains responsible
-    // for PTR/SRV/TXT service discovery and must not register competing A/AAAA data.
-    removeBonjourHostAddressRecords(service);
-    service.on?.('error', (error) => logger.warn('SnapOverLAN mDNS publish error:', error));
+    const ipv6Interface = getIpv6Interface(ipv4Address);
+    const startTransport = async (options, multicastAddress) => {
+      let bonjour;
+      try {
+        bonjour = new BonjourClass(options, (error) => logger.warn('SnapOverLAN mDNS error:', error));
+      } catch (error) {
+        try { options.socket?.close(); } catch {}
+        throw error;
+      }
+      const transport = { bonjour, detach: () => {} };
+      transports.push(transport);
+      const mdnsSocket = bonjour.server?.mdns;
+      if (!mdnsSocket?.on || !mdnsSocket?.respond) {
+        throw new Error('Bonjour did not expose its multicast-dns socket.');
+      }
+      transport.detach = createHostnameResponder({
+        debugLog, hostname, ipv4Address, logger, mdnsSocket, multicastAddress,
+      });
+      let service;
+      // Bonjour does not attach socket error listeners itself.
+      mdnsSocket.on('error', (error) => service?.emit('error', error));
+      mdnsSocket.on('warning', (error) => {
+        logger.warn('SnapOverLAN mDNS socket warning:', error);
+        // A failed membership must not be reported as a working advertisement.
+        if (!transport.started) service?.emit('error', error);
+      });
+      service = bonjour.publish({
+        disableIPv6: true,
+        host: hostname,
+        name: `SnapOverLAN ${deviceId}`,
+        port,
+        protocol: 'tcp',
+        type: 'http',
+        txt: { application: 'SnapOverLAN', deviceId, protocolVersion: '1' },
+      });
+      // Only the explicit responder owns host A records, on both transports.
+      removeBonjourHostAddressRecords(service);
+      service.on?.('error', (error) => logger.warn('SnapOverLAN mDNS publish error:', error));
+      await waitForServiceUp(service, startupTimeoutMs);
+      transport.started = true;
+    };
 
     try {
-      await waitForServiceUp(service, startupTimeoutMs);
+      await startTransport({
+        bind: '0.0.0.0',
+        interface: ipv4Address,
+      }, MDNS_MULTICAST_ADDRESS);
+      if (ipv6Interface) {
+        await startTransport({
+          type: 'udp6', bind: '::', ip: 'ff02::fb', interface: ipv6Interface,
+          socket: socketFactory({ type: 'udp6', reuseAddr: true, ipv6Only: true }),
+        }, 'ff02::fb');
+      }
     } catch (error) {
       logger.warn(
         `SnapOverLAN mDNS advertisement: started=false hostname=${hostname} `
         + `ipv4=${ipv4Address} port=${port}`,
       );
-      await stop();
+      await stopTransports();
       throw error;
     }
 
@@ -257,6 +292,7 @@ const createMdnsAdvertiser = ({
       deviceId,
       hostname,
       ipv4Addresses: [ipv4Address],
+      ipv6Interface,
       port,
       stableUrl: formatStableUrl(deviceId, port),
       started: true,
@@ -265,9 +301,23 @@ const createMdnsAdvertiser = ({
     return status;
   };
 
+  const start = () => {
+    if (stopping) return stopping.then(start);
+    if (!starting) starting = startTransports().finally(() => { starting = null; });
+    return starting;
+  };
+  const stop = () => {
+    if (!stopping) stopping = (async () => {
+      // Drain an in-flight start before closing, so it cannot create a late socket.
+      await starting?.catch(() => {});
+      await stopTransports();
+    })().finally(() => { stopping = null; });
+    return stopping;
+  };
   return { start, stop };
 };
 
 export {
   createMdnsAdvertiser,
+  getMdnsIpv6Interface,
 };

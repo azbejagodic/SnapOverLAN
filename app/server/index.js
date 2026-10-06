@@ -15,7 +15,7 @@ import {
 } from './config.js';
 import { formatDeviceHostname, getOrCreateDeviceId } from './device-identity.js';
 import { getPhoneUrlRecords } from './lan.js';
-import { createMdnsAdvertiser } from './mdns.js';
+import { createMdnsAdvertiser, getMdnsIpv6Interface } from './mdns.js';
 import { ensureStorageDirectories } from './storage.js';
 import { createServerApp } from './app.js';
 import { createParentBridge } from './parent-bridge.js';
@@ -42,7 +42,9 @@ let lanExposureEnabled = LAN_EXPOSURE;
 
 const isMdnsAddressCurrent = (lanUrls) => mdnsStatus?.started
   && mdnsStatus.ipv4Addresses?.length > 0
-  && mdnsStatus.ipv4Addresses.every((address) => lanUrls.some((record) => record.address === address));
+  && mdnsStatus.ipv4Addresses.every((address) => lanUrls.some((record) => record.address === address))
+  && (mdnsStatus.ipv6Interface === undefined
+    || mdnsStatus.ipv6Interface === getMdnsIpv6Interface(mdnsStatus.ipv4Addresses[0]));
 
 const getServerStatus = () => {
   const address = serverInstance?.address?.();

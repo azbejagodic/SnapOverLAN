@@ -42,6 +42,7 @@ const createHarness = async (
   initialStatus = status(),
   initialProfile = 'Private',
   initialLanAccess = 'available',
+  initialNetworkDetails = null,
 ) => {
   let response = initialStatus;
   let profile = initialProfile;
@@ -59,6 +60,7 @@ const createHarness = async (
     'downloadCurrentBatchBtn', 'clearBatchesBtn', 'qrModal', 'closeQrBtn',
     'diagnosticsSummary', 'diagnosticsList', 'diagnosticsWarning', 'diagnosticsUrls', 'diagnosticsPanel',
     'publicNetworkWarning', 'openNetworkSettingsBtn', 'networkSettingsMessage',
+    'publicNetworkDescription', 'networkProfileInstructions',
   ].map((id) => [id, new Element()]));
   const navigator = {};
   Object.defineProperty(navigator, 'onLine', {
@@ -81,7 +83,7 @@ const createHarness = async (
       setInterval: (callback, ms) => { assert.equal(ms, 5000); interval = callback; return 1; },
       clearInterval() {},
       snapOverLAN: {
-        getServerState: async () => ({ state: 'online', lanAccess: initialLanAccess }),
+        getServerState: async () => ({ state: 'online', lanAccess: initialLanAccess, networkDetails: initialNetworkDetails }),
         getBackgroundMode: async () => false,
         getNetworkProfile: async (address) => {
           profileRequests.push(address);
@@ -329,10 +331,38 @@ test('Public profile shows a phone-access warning while the server stays online 
   assert.match(markup, /Phone access is blocked because this network is set to Public/);
   assert.match(markup, /To connect your phone:/);
   assert.match(markup, /<li>Click Open network settings\.<\/li>/);
-  assert.match(markup, /<li>Under Network profile type, select Private network\.<\/li>/);
+  assert.match(markup, /<li id="networkProfileInstructions">Under Network profile type, select Private network\.<\/li>/);
   assert.match(markup, /<li>Return to SnapOverLAN\. It will reconnect automatically\.<\/li>/);
   assert.match(markup, /Use Private only on networks you trust/);
 });
+
+for (const ssid of ['MyNetwork', null, '']) {
+  test(`blocked Public Wi-Fi provides connected-network properties instructions with SSID ${JSON.stringify(ssid)}`, async () => {
+    const h = await createHarness(status([]), null, 'blocked-public', { adapterType: 'wifi', ssid });
+    await h.refresh();
+    assert.equal(h.elements.publicNetworkWarning.hidden, false);
+    const instructions = h.elements.networkProfileInstructions.textContent;
+    assert.match(instructions, /Properties > Network profile type > Private/);
+    if (ssid) {
+      assert.match(h.elements.publicNetworkDescription.textContent, /Wi-Fi network 'MyNetwork' is set to Public/);
+      assert.match(instructions, /'MyNetwork'/);
+    } else {
+      assert.match(instructions, /your connected Wi-Fi network/);
+      assert.doesNotMatch(instructions, /undefined|''/);
+    }
+    await h.elements.openNetworkSettingsBtn.click();
+    assert.equal(h.getSettingsOpened(), 1);
+  });
+}
+
+for (const adapterType of ['ethernet', null]) {
+  test(`Public ${adapterType} adapter retains generic profile instructions without Wi-Fi data`, async () => {
+    const h = await createHarness(status([]), null, 'blocked-public', { adapterType, ssid: 'stale' });
+    await h.refresh();
+    assert.equal(h.elements.networkProfileInstructions.textContent, 'Under Network profile type, select Private network.');
+    assert.doesNotMatch(h.elements.publicNetworkDescription.textContent, /Wi-Fi|stale/);
+  });
+}
 
 test('trusted Public-network status keeps the local desktop online while LAN setup stays unavailable', async () => {
   const h = await createHarness(status([]), null, 'blocked-public');

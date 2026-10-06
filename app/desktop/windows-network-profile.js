@@ -12,8 +12,15 @@ export const createWindowsNetworkProfileScript = (address) => {
     "@($profiles | Where-Object { $_.IPv4Connectivity -ne 'Disconnected' } | ForEach-Object {",
     '  $profile = $_',
     '  $medium = $null',
-    '  try { $medium = [int](Get-NetAdapter -InterfaceIndex $profile.InterfaceIndex -IncludeHidden -ErrorAction Stop).NdisPhysicalMedium } catch {}',
-    '  [pscustomobject]@{ NetworkCategory = [string]$profile.NetworkCategory; NdisPhysicalMedium = $medium }',
+    '  $adapter = $null; $ssid = $null',
+    '  try { $adapter = Get-NetAdapter -InterfaceIndex $profile.InterfaceIndex -IncludeHidden -ErrorAction Stop; $medium = [int]$adapter.NdisPhysicalMedium } catch {}',
+    '  if ($medium -in @(1, 9)) {',
+    '    try {',
+    '      $connections = @([Windows.Networking.Connectivity.NetworkInformation, Windows, ContentType=WindowsRuntime]::GetConnectionProfiles() | Where-Object { $_.IsWlanConnectionProfile -and $_.NetworkAdapter.NetworkAdapterId -eq [guid]$adapter.InterfaceGuid })',
+    '      if ($connections.Count -eq 1) { $ssid = $connections[0].WlanConnectionProfileDetails.GetConnectedSsid() }',
+    '    } catch {}',
+    '  }',
+    '  [pscustomobject]@{ NetworkCategory = [string]$profile.NetworkCategory; NdisPhysicalMedium = $medium; Ssid = $ssid }',
     '}) | ConvertTo-Json -Compress',
   ].join('\r\n');
 };
@@ -47,7 +54,11 @@ export async function getWindowsNetworkProfile(address, {
       return null;
     }))];
     if (unique.length === 1 && ['Public', 'Private', 'DomainAuthenticated'].includes(unique[0])) {
-      onAdapterDetected(adapterTypes.length === 1 ? adapterTypes[0] : null);
+      const adapterType = adapterTypes.length === 1 ? adapterTypes[0] : null;
+      const ssid = adapterType === 'wifi' && records.length === 1
+        && typeof records[0]?.Ssid === 'string' && records[0].Ssid.trim()
+        ? records[0].Ssid : null;
+      onAdapterDetected(adapterType, { ssid });
     }
     // Missing, ambiguous, or unrecognized results must not claim access is blocked.
     return unique.length === 1 && ['Public', 'Private', 'DomainAuthenticated'].includes(unique[0])

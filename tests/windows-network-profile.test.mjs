@@ -27,7 +27,9 @@ test('profile detection queries only the adapter owning the advertised address, 
   assert.match(script, /Get-NetConnectionProfile -InterfaceIndex \$_\.InterfaceIndex -ErrorAction Stop/);
   assert.match(script, /IPv4Connectivity -ne 'Disconnected'/);
   assert.match(script, /Get-NetAdapter -InterfaceIndex \$profile\.InterfaceIndex -IncludeHidden -ErrorAction Stop/);
-  assert.match(script, /try \{ \$medium = .*Get-NetAdapter.* \} catch \{\}/);
+  assert.match(script, /try \{ \$adapter = Get-NetAdapter.*\$medium = .*NdisPhysicalMedium \} catch \{\}/);
+  assert.match(script, /NetworkAdapterId -eq \[guid\]\$adapter.InterfaceGuid/);
+  assert.match(script, /WlanConnectionProfileDetails.GetConnectedSsid\(\)/);
   assert.doesNotMatch(script, /Set-|New-|Remove-|RunAs|Start-Process|Firewall|Invoke-/);
 });
 
@@ -95,7 +97,29 @@ test('an adapter lookup failure leaves the existing Public profile detection int
     Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const parsed = JSON.parse(result.stdout.trim());
-  assert.deepEqual(Array.isArray(parsed) ? parsed : [parsed], [{ NetworkCategory: 'Public', NdisPhysicalMedium: null }]);
+  assert.deepEqual(Array.isArray(parsed) ? parsed : [parsed], [{ NetworkCategory: 'Public', NdisPhysicalMedium: null, Ssid: null }]);
+});
+
+test('SSID metadata is optional, Wi-Fi-only, and discarded on ambiguous or failed detection', async () => {
+  for (const [records, expectedType, expectedSsid] of [
+    [[{ NetworkCategory: 'Public', NdisPhysicalMedium: 9, Ssid: 'MyNetwork' }], 'wifi', 'MyNetwork'],
+    [[{ NetworkCategory: 'Public', NdisPhysicalMedium: 9, Ssid: null }], 'wifi', null],
+    [[{ NetworkCategory: 'Public', NdisPhysicalMedium: 9, Ssid: '' }], 'wifi', null],
+    [[{ NetworkCategory: 'Public', NdisPhysicalMedium: 14, Ssid: 'stale' }], 'ethernet', null],
+    [[{ NetworkCategory: 'Public', NdisPhysicalMedium: 9, Ssid: 'First' },
+      { NetworkCategory: 'Public', NdisPhysicalMedium: 9, Ssid: 'Second' }], 'wifi', null],
+  ]) {
+    let adapterType;
+    let ssid = null;
+    const profile = await getWindowsNetworkProfile('192.168.1.20', {
+      platform: 'win32',
+      onAdapterDetected: (type, details) => { adapterType = type; ssid = details?.ssid || null; },
+      execFileImpl: (_command, _args, _options, callback) => callback(null, JSON.stringify(records)),
+    });
+    assert.equal(profile, 'Public');
+    assert.equal(adapterType, expectedType);
+    assert.equal(ssid, expectedSsid);
+  }
 });
 
 test('settings action opens only the fixed Windows network page and handles failure safely', async () => {

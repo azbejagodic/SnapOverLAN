@@ -23,6 +23,7 @@ const createIpcHarness = () => {
     rendererServerRequest: async (...args) => { calls.push(['request', ...args]); return response; },
     startServer: async () => { calls.push(['start']); return state; },
     networkSettingsAdapterType: null,
+    networkProfileDetails: new Map(),
     getWindowsNetworkProfile: async (address, { onAdapterDetected }) => {
       calls.push(['profile', address]); onAdapterDetected('ethernet'); return 'Public';
     },
@@ -42,7 +43,8 @@ const createIpcHarness = () => {
     SERVER_ORIGIN: 'http://localhost:8787',
     console,
   };
-  runInNewContext(handlersSource, context);
+  const profileSource = mainSource.slice(mainSource.indexOf('const getDesktopNetworkProfile ='), mainSource.indexOf('const getPublicNetworkDetails ='));
+  runInNewContext(`${profileSource}\n${handlersSource}`, context);
   return { handlers, calls, sender, context, state, response, download };
 };
 
@@ -50,7 +52,7 @@ const channels = [
   ['server:get-state', [], (harness) => harness.state, [['state']]],
   ['server:request', ['/api/batches', 'GET'], (harness) => harness.response, [['request', '/api/batches', 'GET']]],
   ['server:retry', [], (harness) => harness.state, [['start']]],
-  ['network:get-profile', ['192.168.1.20'], () => 'Public', [['profile', '192.168.1.20']]],
+  ['network:get-profile', ['192.168.1.20'], () => ({ profile: 'Public', adapterType: 'ethernet', ssid: null }), [['profile', '192.168.1.20']]],
   ['network:open-settings', [], () => true, [['network-settings', null]]],
   ['background:get', [], () => false, []],
   ['background:set', [true], () => true, [['background', true]]],
@@ -133,11 +135,34 @@ test('settings retains the known adapter during refresh and updates it only when
   assert.deepEqual(harness.calls.at(-1), ['network-settings', 'wifi']);
 });
 
+test('profile IPC forwards Wi-Fi SSID and clears it when replaced by an unknown adapter', async () => {
+  const h = createIpcHarness();
+  const event = { sender: h.sender, senderFrame: h.sender.mainFrame };
+  h.context.getWindowsNetworkProfile = async (_address, { onAdapterDetected }) => {
+    onAdapterDetected('wifi', { ssid: 'MyNetwork' });
+    return 'Public';
+  };
+  assert.deepEqual({ ...await h.handlers.get('network:get-profile')(event, '192.168.1.20') }, {
+    profile: 'Public', adapterType: 'wifi', ssid: 'MyNetwork',
+  });
+  h.context.getWindowsNetworkProfile = async (_address, { onAdapterDetected }) => {
+    onAdapterDetected(null);
+    return null;
+  };
+  assert.deepEqual({ ...await h.handlers.get('network:get-profile')(event, '192.168.1.20') }, {
+    profile: null, adapterType: null, ssid: null,
+  });
+  await h.handlers.get('network:open-settings')(event);
+  assert.deepEqual(h.calls.at(-1), ['network-settings', null]);
+});
+
 for (const [channel, args, expectedResult, expectedCalls] of channels) {
   test(`${channel} accepts the main window main frame and preserves its result`, async () => {
     const harness = createIpcHarness();
     const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
-    assert.strictEqual(await harness.handlers.get(channel)(event, ...args), expectedResult(harness));
+    const result = await harness.handlers.get(channel)(event, ...args);
+    if (channel === 'network:get-profile') assert.deepEqual({ ...result }, expectedResult(harness));
+    else assert.strictEqual(result, expectedResult(harness));
     assert.deepEqual(harness.calls, expectedCalls);
   });
 

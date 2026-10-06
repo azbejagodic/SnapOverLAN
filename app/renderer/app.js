@@ -25,6 +25,8 @@ const closeQrBtn = document.getElementById('closeQrBtn');
 const publicNetworkWarning = document.getElementById('publicNetworkWarning');
 const openNetworkSettingsBtn = document.getElementById('openNetworkSettingsBtn');
 const networkSettingsMessage = document.getElementById('networkSettingsMessage');
+const publicNetworkDescription = document.getElementById('publicNetworkDescription');
+const networkProfileInstructions = document.getElementById('networkProfileInstructions');
 
 const AUTO_REFRESH_MS = 5000;
 const AUTO_COPY_MESSAGE_MS = 4000;
@@ -42,17 +44,38 @@ let autoCopyMessageTimer = null;
 let networkProfileRequestId = 0;
 let networkProfileAddress = '';
 let desktopLanAccess = 'available';
+let desktopNetworkDetails = null;
+
+function renderNetworkProfileGuidance(details) {
+  const wifi = details?.adapterType === 'wifi';
+  const ssid = wifi && typeof details?.ssid === 'string' && details.ssid.trim() ? details.ssid : '';
+  if (publicNetworkDescription) publicNetworkDescription.textContent = ssid
+    ? `Phone access is blocked because your Wi-Fi network '${ssid}' is set to Public.`
+    : 'Phone access is blocked because this network is set to Public.';
+  if (networkProfileInstructions) networkProfileInstructions.textContent = wifi
+    ? `In Windows Settings, open ${ssid ? `'${ssid}'` : 'your connected Wi-Fi network'} > Properties > Network profile type > Private.`
+    : 'Under Network profile type, select Private network.';
+}
 
 function clearNetworkProfileWarning() {
   networkProfileRequestId += 1;
   networkProfileAddress = '';
   if (publicNetworkWarning) publicNetworkWarning.hidden = true;
+  renderNetworkProfileGuidance(null);
   if (networkSettingsMessage) networkSettingsMessage.hidden = true;
 }
 
 async function refreshNetworkProfile(data) {
   if (desktopLanAccess === 'blocked-public') {
-    networkProfileRequestId += 1;
+    const requestId = ++networkProfileRequestId;
+    let details = null;
+    try {
+      const server = await window.snapOverLAN.getServerState();
+      details = server?.networkDetails || null;
+    } catch {}
+    if (requestId !== networkProfileRequestId || desktopLanAccess !== 'blocked-public') return;
+    desktopNetworkDetails = details;
+    renderNetworkProfileGuidance(desktopNetworkDetails);
     networkProfileAddress = '';
     if (publicNetworkWarning) publicNetworkWarning.hidden = false;
     return;
@@ -69,7 +92,8 @@ async function refreshNetworkProfile(data) {
   try { profile = await window.snapOverLAN.getNetworkProfile(address); } catch {}
   // A result from a disconnected/replaced network must not restore a stale warning.
   if (requestId !== networkProfileRequestId) return;
-  if (publicNetworkWarning) publicNetworkWarning.hidden = profile !== 'Public';
+  renderNetworkProfileGuidance(typeof profile === 'object' ? profile : null);
+  if (publicNetworkWarning) publicNetworkWarning.hidden = (profile?.profile || profile) !== 'Public';
 }
 
 function formatBytes(bytes) {
@@ -160,6 +184,8 @@ async function syncDesktopControls() {
       window.snapOverLAN.getBackgroundMode(),
     ]);
     desktopLanAccess = server?.lanAccess || 'available';
+    desktopNetworkDetails = server?.networkDetails || null;
+    renderNetworkProfileGuidance(desktopNetworkDetails);
     if (desktopLanAccess === 'blocked-public') {
       networkProfileRequestId += 1;
       networkProfileAddress = '';
@@ -498,6 +524,8 @@ refreshDashboard({ source: 'initial' });
 syncDesktopControls();
 window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
   desktopLanAccess = server?.lanAccess || 'available';
+  desktopNetworkDetails = server?.networkDetails || null;
+  renderNetworkProfileGuidance(desktopNetworkDetails);
   if (desktopLanAccess === 'blocked-public') {
     networkProfileRequestId += 1;
     networkProfileAddress = '';

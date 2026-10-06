@@ -4,6 +4,7 @@ import { pathToFileURL } from 'url';
 import {
   DATA_DIR,
   DATA_ROOT,
+  FIREWALL_GUIDANCE_MODE,
   HOST,
   IS_PACKAGED_RUNTIME,
   LAN_EXPOSURE,
@@ -64,6 +65,7 @@ const getServerStatus = () => {
     primaryLanUrl: lanUrls[0]?.url || '',
     launchSource: LAUNCH_SOURCE,
     packaged: IS_PACKAGED_RUNTIME,
+    firewallGuidanceMode: FIREWALL_GUIDANCE_MODE,
     runtimeDataDir: DATA_ROOT,
     latestDir: DATA_DIR,
     uploadTempDir: UPLOAD_TEMP_DIR,

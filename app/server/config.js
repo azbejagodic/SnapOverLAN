@@ -27,12 +27,18 @@ const PWA_DIR = path.join(PROJECT_ROOT, 'pwa');
 const STARTUP_LOG_PATH = process.env.SNAPOVERLAN_LOG_FILE || '';
 const LAUNCH_SOURCE = process.env.SNAPOVERLAN_SERVER_SOURCE || (process.env.SNAPOVERLAN_PARENT_PID ? 'electron' : 'standalone');
 const IS_PACKAGED_RUNTIME = process.env.SNAPOVERLAN_PACKAGED === '1';
+// Match the desktop's packaged Windows / portable runtime distinction for help copy.
+const FIREWALL_GUIDANCE_MODE = process.platform !== 'win32' ? 'other'
+  : !IS_PACKAGED_RUNTIME ? 'development'
+    : process.env.PORTABLE_EXECUTABLE_FILE || process.env.PORTABLE_EXECUTABLE_DIR
+      ? 'portable' : 'setup';
 
 export {
   BATCHES_DIR,
   CURRENT_BATCH_PATH,
   DATA_DIR,
   DATA_ROOT,
+  FIREWALL_GUIDANCE_MODE,
   HOST,
   LAN_EXPOSURE,
   IS_PACKAGED_RUNTIME,

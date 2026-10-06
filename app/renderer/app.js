@@ -273,9 +273,16 @@ function renderDiagnostics(data) {
   if (diagnosticsWarning) {
     diagnosticsWarning.hidden = false;
     diagnosticsWarning.className = privateLanUrls.length ? 'diagnostics-note' : 'diagnostics-note warning';
-    diagnosticsWarning.textContent = privateLanUrls.length
-      ? 'Phone checklist: use the LAN URL above, keep phone and PC on the same Wi-Fi, set the PC network to Private, and allow SnapOverLAN through Windows Firewall on Private networks if Windows asks.'
-      : 'No private LAN IPv4 address was detected. Make sure the PC is connected to the same Wi-Fi as the phone, the network profile is Private, and Windows Firewall allows SnapOverLAN on Private networks.';
+    const firewallGuidance = data.firewallGuidanceMode === 'setup'
+      ? 'Keep your phone and PC on the same trusted network and set the Windows network profile to Private. SnapOverLAN Setup configures the required Private-network firewall rules automatically.'
+      : data.firewallGuidanceMode === 'portable'
+        ? 'Keep your phone and PC on the same trusted network and set the Windows network profile to Private. Portable mode requests UAC approval to configure temporary Private-network, local-subnet firewall rules, which are removed when the app exits.'
+        : data.firewallGuidanceMode === 'other'
+          ? 'Keep your phone and PC on the same trusted network and check that your firewall permits local-network access.'
+          : 'Keep your phone and PC on the same trusted network and set the Windows network profile to Private. Development mode does not configure firewall rules automatically; configure TCP 8787 and UDP 5353 access restricted to Private networks and the local subnet if needed.';
+    diagnosticsWarning.textContent = `${privateLanUrls.length
+      ? 'Phone checklist: use the LAN URL above. '
+      : 'No private LAN IPv4 address was detected. '}${firewallGuidance}`;
   }
 }
 

@@ -67,8 +67,18 @@ for (const publicNetwork of [false, true]) {
 }
 }
 
-const readConfig = (env) => runInNewContext(`${configSource}\n({ PORT, HOST, LAN_EXPOSURE, DATA_ROOT, STARTUP_LOG_PATH, LAUNCH_SOURCE, IS_PACKAGED_RUNTIME })`, {
-  path, fileURLToPath, process: { env },
+const readConfig = (env, platform = 'win32') => runInNewContext(`${configSource}\n({ PORT, HOST, LAN_EXPOSURE, DATA_ROOT, STARTUP_LOG_PATH, LAUNCH_SOURCE, IS_PACKAGED_RUNTIME, FIREWALL_GUIDANCE_MODE })`, {
+  path, fileURLToPath, process: { env, platform },
+});
+
+test('firewall guidance distinguishes Windows Setup, portable, development, and other platforms', () => {
+  assert.match(serverSource, /firewallGuidanceMode: FIREWALL_GUIDANCE_MODE/);
+  assert.equal(readConfig({ SNAPOVERLAN_PACKAGED: '1' }).FIREWALL_GUIDANCE_MODE, 'setup');
+  for (const key of ['PORTABLE_EXECUTABLE_FILE', 'PORTABLE_EXECUTABLE_DIR']) {
+    assert.equal(readConfig({ SNAPOVERLAN_PACKAGED: '1', [key]: 'portable-path' }).FIREWALL_GUIDANCE_MODE, 'portable');
+  }
+  assert.equal(readConfig({}).FIREWALL_GUIDANCE_MODE, 'development');
+  assert.equal(readConfig({ SNAPOVERLAN_PACKAGED: '1' }, 'linux').FIREWALL_GUIDANCE_MODE, 'other');
 });
 // Negative regression inputs: these retired names must not configure the server.
 const retiredEnv = {

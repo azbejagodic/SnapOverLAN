@@ -345,6 +345,34 @@ test('trusted Public-network status keeps the local desktop online while LAN set
   assert.deepEqual(h.profileRequests, []);
 });
 
+for (const urls of [[lanUrl], []]) {
+  test(`Setup firewall guidance explains automatic rules ${urls.length ? 'with' : 'without'} LAN access`, async () => {
+    const h = await createHarness({ ...status(urls), firewallGuidanceMode: 'setup' });
+    const copy = h.elements.diagnosticsWarning.textContent;
+    assert.match(copy, /same trusted network/);
+    assert.match(copy, /Windows network profile to Private/);
+    assert.match(copy, /SnapOverLAN Setup configures the required Private-network firewall rules automatically\./);
+    assert.doesNotMatch(copy, /if Windows asks|allow SnapOverLAN through Windows Firewall|approve|popup|prompt/i);
+  });
+}
+
+test('portable and development firewall guidance describes their own setup requirements', async () => {
+  for (const mode of ['portable', 'development']) {
+    const h = await createHarness({ ...status(), firewallGuidanceMode: mode });
+    const copy = h.elements.diagnosticsWarning.textContent;
+    assert.doesNotMatch(copy, /SnapOverLAN Setup configures|if Windows asks|allow SnapOverLAN through Windows Firewall/i);
+    if (mode === 'portable') {
+      assert.match(copy, /UAC approval/);
+      assert.match(copy, /temporary Private-network, local-subnet firewall rules/);
+      assert.match(copy, /removed when the app exits/);
+    } else {
+      assert.match(copy, /does not configure firewall rules automatically/);
+      assert.match(copy, /TCP 8787 and UDP 5353/);
+      assert.match(copy, /restricted to Private networks and the local subnet/);
+    }
+  }
+});
+
 for (const profile of ['Private', 'DomainAuthenticated', null, new Error('detection failed')]) {
   test(`${String(profile)} profile does not show a misleading Public warning`, async () => {
     const h = await createHarness(status(), profile);

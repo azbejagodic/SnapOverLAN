@@ -32,25 +32,37 @@ const createNetworkExposureController = ({
   };
 
   const detectProfile = async () => {
-    if (platform !== 'win32') return null;
-    const addresses = getLanAddresses()
-      .map((record) => typeof record === 'string' ? record : record?.address)
-      .filter(Boolean);
-    if (addresses.length === 0) return null;
+    if (platform !== 'win32') return { lanAllowed: true, profile: null };
+    let addresses;
+    try {
+      addresses = getLanAddresses()
+        .map((record) => typeof record === 'string' ? record : record?.address)
+        .filter(Boolean);
+    } catch {
+      return { lanAllowed: false, profile: null };
+    }
+    if (addresses.length === 0) return { lanAllowed: false, profile: null };
     const profiles = await Promise.all(addresses.map(async (address) => {
       try { return await getNetworkProfile(address); }
       catch { return null; }
     }));
-    if (profiles.includes('Public')) return 'Public';
-    if (profiles.includes('DomainAuthenticated')) return 'DomainAuthenticated';
-    if (profiles.includes('Private')) return 'Private';
-    return null;
+    if (profiles.includes('Public')) return { lanAllowed: false, profile: 'Public' };
+    const trustedProfiles = new Set(['Private', 'DomainAuthenticated']);
+    if (!profiles.every((profile) => trustedProfiles.has(profile))) {
+      return { lanAllowed: false, profile: null };
+    }
+    return {
+      lanAllowed: true,
+      profile: profiles.includes('DomainAuthenticated') ? 'DomainAuthenticated' : 'Private',
+    };
   };
 
-  const reconcile = async (profile) => {
-    const blocked = profile === 'Public';
+  const reconcile = async ({ lanAllowed, profile }) => {
+    const blocked = !lanAllowed;
     const targetHost = blocked ? LOOPBACK_HOST : LAN_HOST;
-    if (blocked) publishState('blocked-public', profile);
+    if (blocked) {
+      publishState(profile === 'Public' ? 'blocked-public' : 'blocked-profile-unknown', profile);
+    }
 
     if (appliedHost !== targetHost || !manager.isRunning()) {
       transitioning = true;

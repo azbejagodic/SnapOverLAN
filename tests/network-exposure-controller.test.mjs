@@ -12,7 +12,11 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-const createHarness = ({ initialProfile = 'Private' } = {}) => {
+const createHarness = ({
+  initialAddresses = ['192.168.1.20'],
+  initialProfile = 'Private',
+} = {}) => {
+  let addresses = initialAddresses;
   let profile = initialProfile;
   let running = false;
   let activeOperations = 0;
@@ -41,8 +45,12 @@ const createHarness = ({ initialProfile = 'Private' } = {}) => {
     },
   };
   const controller = createNetworkExposureController({
-    getLanAddresses: () => [{ address: '192.168.1.20' }],
-    getNetworkProfile: async () => profile,
+    getLanAddresses: () => addresses.map((address) => ({ address })),
+    getNetworkProfile: async (address) => {
+      const result = typeof profile === 'function' ? profile(address) : profile;
+      if (result instanceof Error) throw result;
+      return result;
+    },
     manager,
     onStateChanged: (state) => states.push(state),
     platform: 'win32',
@@ -58,6 +66,7 @@ const createHarness = ({ initialProfile = 'Private' } = {}) => {
     getMaxActiveOperations: () => maxActiveOperations,
     getTimerCallback: () => timerCallback,
     getTimerCleared: () => timerCleared,
+    setAddresses: (value) => { addresses = value; },
     setProfile: (value) => { profile = value; },
     setStopGate: (value) => { stopGate = value; },
   };
@@ -78,6 +87,88 @@ test('startup on Public uses loopback and disables LAN and mDNS exposure', async
   assert.deepEqual(h.events, [['start', { host: LOOPBACK_HOST, lanExposure: false }]]);
   assert.deepEqual(h.controller.getState(), { lanAccess: 'blocked-public', networkProfile: 'Public' });
   assert.ok(h.states.some((state) => state.lanAccess === 'blocked-public'));
+  await h.controller.dispose();
+});
+
+test('Windows startup with no LAN addresses remains loopback-only', async () => {
+  const h = createHarness({ initialAddresses: [] });
+  await h.controller.start();
+  assert.deepEqual(h.events, [['start', { host: LOOPBACK_HOST, lanExposure: false }]]);
+  assert.deepEqual(h.controller.getState(), {
+    lanAccess: 'blocked-profile-unknown', networkProfile: null,
+  });
+  await h.controller.dispose();
+});
+
+for (const [name, result] of [
+  ['profile lookup failure', new Error('profile lookup failed')],
+  ['null profile', null],
+  ['unrecognized profile', 'Unknown'],
+]) {
+  test(`Windows startup with ${name} remains loopback-only`, async () => {
+    const h = createHarness({ initialProfile: result });
+    await h.controller.start();
+    assert.deepEqual(h.events, [['start', { host: LOOPBACK_HOST, lanExposure: false }]]);
+    assert.deepEqual(h.controller.getState(), {
+      lanAccess: 'blocked-profile-unknown', networkProfile: null,
+    });
+    await h.controller.dispose();
+  });
+}
+
+test('one trusted and one unknown Windows interface keeps all LAN exposure blocked', async () => {
+  const h = createHarness({
+    initialAddresses: ['192.168.1.20', '10.0.0.5'],
+    initialProfile: (address) => address === '192.168.1.20' ? 'Private' : null,
+  });
+  await h.controller.start();
+  assert.deepEqual(h.events, [['start', { host: LOOPBACK_HOST, lanExposure: false }]]);
+  assert.equal(h.controller.getState().lanAccess, 'blocked-profile-unknown');
+  await h.controller.dispose();
+});
+
+test('all Private and DomainAuthenticated Windows interfaces enable LAN exposure', async () => {
+  const h = createHarness({
+    initialAddresses: ['192.168.1.20', '10.0.0.5'],
+    initialProfile: (address) => (
+      address === '192.168.1.20' ? 'Private' : 'DomainAuthenticated'
+    ),
+  });
+  await h.controller.start();
+  assert.deepEqual(h.events, [['start', { host: LAN_HOST, lanExposure: true }]]);
+  assert.deepEqual(h.controller.getState(), {
+    lanAccess: 'available', networkProfile: 'DomainAuthenticated',
+  });
+  await h.controller.dispose();
+});
+
+test('unknown network to Private transition enables LAN without an application restart', async () => {
+  const h = createHarness({ initialAddresses: [] });
+  await h.controller.start();
+  h.setAddresses(['192.168.1.20']);
+  h.setProfile('Private');
+  await h.controller.refresh();
+  assert.deepEqual(h.events, [
+    ['start', { host: LOOPBACK_HOST, lanExposure: false }],
+    ['stop'],
+    ['start', { host: LAN_HOST, lanExposure: true }],
+  ]);
+  assert.equal(h.controller.getState().lanAccess, 'available');
+  await h.controller.dispose();
+});
+
+test('trusted to unknown transition removes LAN exposure', async () => {
+  const h = createHarness();
+  await h.controller.start();
+  h.setProfile(null);
+  await h.controller.refresh();
+  assert.deepEqual(h.events.slice(-2), [
+    ['stop'],
+    ['start', { host: LOOPBACK_HOST, lanExposure: false }],
+  ]);
+  assert.deepEqual(h.controller.getState(), {
+    lanAccess: 'blocked-profile-unknown', networkProfile: null,
+  });
   await h.controller.dispose();
 });
 
@@ -180,7 +271,7 @@ test('shutdown during a profile transition does not relaunch a server or leak th
   assert.equal(h.getTimerCleared(), true);
 });
 
-test('non-Windows and unknown profile detection preserve existing LAN behavior', async () => {
+test('non-Windows platforms preserve existing LAN behavior without profile detection', async () => {
   for (const platform of ['linux', 'darwin']) {
     const events = [];
     const manager = {

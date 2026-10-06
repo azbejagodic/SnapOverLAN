@@ -178,7 +178,8 @@ test('desktop companion exposes no manual photo copy or viewer actions', () => {
 });
 
 test('background mode is limited to an online server', () => {
-  assert.match(mainSource, /serverState !== 'online' && backgroundMode/);
+  assert.match(mainSource, /serverState !== 'online'[\s\S]*?&& backgroundMode/);
+  assert.match(mainSource, /serverState === 'error' \|\| !networkExposureController\?\.isTransitioning\(\)/);
   assert.match(mainSource, /nextValue && serverState !== 'online'/);
   assert.match(desktopShellSource, /label: `Background Mode:[\s\S]*?enabled: getServerOnline\(\)/);
   assert.match(rendererSource, /backgroundToggleBtn\.disabled = desktopServerState !== 'online'/);

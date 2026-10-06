@@ -38,7 +38,11 @@ class Element {
   click() { return this.listeners.get('click')?.({ target: this }); }
 }
 
-const createHarness = async (initialStatus = status(), initialProfile = 'Private') => {
+const createHarness = async (
+  initialStatus = status(),
+  initialProfile = 'Private',
+  initialLanAccess = 'available',
+) => {
   let response = initialStatus;
   let profile = initialProfile;
   let settingsResult = true;
@@ -77,7 +81,7 @@ const createHarness = async (initialStatus = status(), initialProfile = 'Private
       setInterval: (callback, ms) => { assert.equal(ms, 5000); interval = callback; return 1; },
       clearInterval() {},
       snapOverLAN: {
-        getServerState: async () => ({ state: 'online' }),
+        getServerState: async () => ({ state: 'online', lanAccess: initialLanAccess }),
         getBackgroundMode: async () => false,
         getNetworkProfile: async (address) => {
           profileRequests.push(address);
@@ -328,6 +332,17 @@ test('Public profile shows a phone-access warning while the server stays online 
   assert.match(markup, /<li>Under Network profile type, select Private network\.<\/li>/);
   assert.match(markup, /<li>Return to SnapOverLAN\. It will reconnect automatically\.<\/li>/);
   assert.match(markup, /Use Private only on networks you trust/);
+});
+
+test('trusted Public-network status keeps the local desktop online while LAN setup stays unavailable', async () => {
+  const h = await createHarness(status([]), null, 'blocked-public');
+  assert.equal(h.elements.publicNetworkWarning.hidden, false);
+  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+  assert.equal(h.renderer.getState(), 'online');
+  assert.equal(h.elements.backgroundToggleBtn.disabled, false);
+  assert.equal(h.elements.qrBtn.disabled, true);
+  assert.equal(h.elements.phoneUrl.textContent, '');
+  assert.deepEqual(h.profileRequests, []);
 });
 
 for (const profile of ['Private', 'DomainAuthenticated', null, new Error('detection failed')]) {

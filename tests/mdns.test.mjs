@@ -576,3 +576,30 @@ test('mDNS startup failure keeps the HTTP server and IP fallback working', async
 
   await stopServer();
 });
+
+test('Public-network loopback mode exposes no LAN URLs and never starts mDNS', async (t) => {
+  t.mock.method(os, 'networkInterfaces', () => ({ wifi: [{
+    family: 'IPv4', internal: false, address: '192.168.1.20',
+  }] }));
+  let starts = 0;
+  const server = await startServer({
+    host: '127.0.0.1',
+    lanExposure: false,
+    log: false,
+    mdnsFactory: () => ({
+      start: async () => { starts += 1; },
+      stop: async () => {},
+    }),
+    port: 0,
+  });
+  t.after(() => stopServer());
+  const { port } = server.address();
+  const status = await fetch(`http://127.0.0.1:${port}/api/server-status`).then(
+    (response) => response.json(),
+  );
+  assert.equal(status.bindHost, '127.0.0.1');
+  assert.deepEqual(status.lanUrls, []);
+  assert.equal(status.primaryLanUrl, '');
+  assert.equal(status.stableUrl, '');
+  assert.equal(starts, 0);
+});

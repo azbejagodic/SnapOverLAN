@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { waitForUploadDrain } from '../app/desktop/upload-drain.js';
 
 const managerSource = (await readFile(new URL('../app/desktop/server-manager.js', import.meta.url), 'utf8'))
   .replace(/^import.*;\r?\n/gm, '').replace(/export \{.*\};/, '');
@@ -17,7 +18,8 @@ const serverSource = await readFile(new URL('../app/server/index.js', import.met
 const watchSource = serverSource.slice(serverSource.indexOf('const watchParentProcess ='), serverSource.indexOf('const shutdownServer ='));
 
 for (const isPackaged of [false, true]) {
-  test(`${isPackaged ? 'packaged' : 'development'} desktop launch writes modern server variables only`, async () => {
+for (const publicNetwork of [false, true]) {
+  test(`${isPackaged ? 'packaged' : 'development'} desktop launch writes ${publicNetwork ? 'Public loopback' : 'Private LAN'} variables only`, async () => {
     const root = path.resolve('test-runtime');
     const logPath = path.join(root, 'startup.log');
     let launch;
@@ -41,9 +43,13 @@ for (const isPackaged of [false, true]) {
       port: 9999, projectRoot: root, serverPath: path.join(root, 'server.js'),
       serverOrigin: 'http://localhost:9999', writeStartupLog: async () => {},
     });
-    assert.equal((await manager.start()).state, 'online');
+    assert.equal((await manager.start(publicNetwork ? {
+      host: '127.0.0.1', lanExposure: false,
+    } : undefined)).state, 'online');
     assert.equal(launch.env.SNAPOVERLAN_PARENT_PID, '123');
     assert.equal(launch.env.SNAPOVERLAN_LOG_FILE, logPath);
+    assert.equal(launch.env.SNAPOVERLAN_HOST, publicNetwork ? '127.0.0.1' : '0.0.0.0');
+    assert.equal(launch.env.SNAPOVERLAN_LAN_EXPOSURE, publicNetwork ? '0' : '1');
     assert.equal(launch.env.SNAPOVERLAN_RUN_SERVER, '1');
     assert.equal(launch.env.SNAPOVERLAN_SERVER_SOURCE, isPackaged ? 'electron-packaged-child' : 'electron-dev-child');
     assert.equal(launch.env.SNAPOVERLAN_DATA_DIR, isPackaged ? path.join(root, 'data') : undefined);
@@ -59,8 +65,9 @@ for (const isPackaged of [false, true]) {
     assert.equal(launch.windowsHide, true);
   });
 }
+}
 
-const readConfig = (env) => runInNewContext(`${configSource}\n({ PORT, DATA_ROOT, STARTUP_LOG_PATH, LAUNCH_SOURCE, IS_PACKAGED_RUNTIME })`, {
+const readConfig = (env) => runInNewContext(`${configSource}\n({ PORT, HOST, LAN_EXPOSURE, DATA_ROOT, STARTUP_LOG_PATH, LAUNCH_SOURCE, IS_PACKAGED_RUNTIME })`, {
   path, fileURLToPath, process: { env },
 });
 // Negative regression inputs: these retired names must not configure the server.
@@ -77,6 +84,8 @@ test('retired environment names are ignored and server defaults remain intact', 
   }]) {
     const config = readConfig(env);
     assert.equal(config.PORT, 8787);
+    assert.equal(config.HOST, '0.0.0.0');
+    assert.equal(config.LAN_EXPOSURE, true);
     assert.equal(config.DATA_ROOT, fileURLToPath(new URL('../data', import.meta.url)));
     assert.equal(config.STARTUP_LOG_PATH, '');
     assert.equal(config.LAUNCH_SOURCE, 'standalone');
@@ -98,6 +107,66 @@ test('modern variables configure the server independently of retired inputs', ()
   }
   assert.equal(readConfig({ SNAPOVERLAN_PARENT_PID: '456' }).LAUNCH_SOURCE, 'electron');
   assert.equal(readConfig({ ...retiredEnv, SNAPOVERLAN_PACKAGED: '0' }).IS_PACKAGED_RUNTIME, false);
+});
+
+test('desktop network exposure variables select loopback without accepting arbitrary bind hosts', () => {
+  const config = readConfig({ SNAPOVERLAN_HOST: '127.0.0.1', SNAPOVERLAN_LAN_EXPOSURE: '0' });
+  assert.equal(config.PORT, 8787);
+  assert.equal(config.HOST, '127.0.0.1');
+  assert.equal(config.LAN_EXPOSURE, false);
+  assert.equal(config.DATA_ROOT, fileURLToPath(new URL('../data', import.meta.url)));
+  assert.equal(config.STARTUP_LOG_PATH, '');
+  assert.equal(config.LAUNCH_SOURCE, 'standalone');
+  assert.equal(config.IS_PACKAGED_RUNTIME, false);
+  assert.equal(readConfig({ SNAPOVERLAN_HOST: '192.168.1.20' }).HOST, '0.0.0.0');
+});
+
+test('Public startup replaces a verified LAN-bound server before launching one loopback child', async () => {
+  const root = path.resolve('test-runtime');
+  const token = 'a'.repeat(64);
+  let existing = true;
+  let launch;
+  let shutdowns = 0;
+  let shutdownObserver;
+  const child = new EventEmitter();
+  child.exitCode = null;
+  const createManager = runInNewContext(`${managerSource}\ncreateServerManager`, {
+    path, console, setTimeout, clearTimeout, waitForUploadDrain,
+    process: { env: {}, pid: 123, execPath: 'electron.exe', resourcesPath: root },
+    spawn: (command, args, options) => { launch = { command, args, ...options }; return child; },
+    createServerClient: () => ({
+      getServerIdentity: async () => {
+        if (launch) return { kind: 'current', shutdownToken: token, server: { bindHost: '127.0.0.1' } };
+        if (existing) return { kind: 'current', shutdownToken: token, server: { bindHost: '0.0.0.0' } };
+        return null;
+      },
+      isPortInUse: async () => false,
+      postServerShutdown: async () => {
+        shutdowns += 1;
+        existing = false;
+        shutdownObserver.closed();
+      },
+      waitForPortRelease: async () => true,
+      watchServerShutdown: async (_shutdownToken, observer) => {
+        shutdownObserver = observer;
+        return () => {};
+      },
+    }),
+  });
+  const manager = createManager({
+    electronApp: { isPackaged: false },
+    getAutoCopyEnabled: () => false,
+    getStartupLogPath: () => '',
+    isQuitting: () => false,
+    onAutoCopyUnavailable() {}, onMessage: async () => {}, onStateChanged() {},
+    port: 8787, projectRoot: root, serverPath: path.join(root, 'server.js'),
+    serverOrigin: 'http://localhost:8787', writeStartupLog: async () => {},
+  });
+  const state = await manager.start({ host: '127.0.0.1', lanExposure: false });
+  assert.equal(state.state, 'online');
+  assert.equal(shutdowns, 1);
+  assert.equal(launch.env.SNAPOVERLAN_HOST, '127.0.0.1');
+  assert.equal(launch.env.SNAPOVERLAN_LAN_EXPOSURE, '0');
 });
 
 for (const modernPid of [undefined, '', '456']) {

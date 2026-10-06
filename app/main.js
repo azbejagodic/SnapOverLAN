@@ -25,7 +25,9 @@ import { createRendererServerClient } from './desktop/renderer-server-client.js'
 import { createUpdateDialogController } from './desktop/update-dialog-controller.js';
 import { createElectronUpdateManager } from './desktop/update-manager.js';
 import { configurePortableFirewall } from './desktop/portable-firewall.js';
+import { createNetworkExposureController } from './desktop/network-exposure-controller.js';
 import { getWindowsNetworkProfile, openWindowsNetworkSettings } from './desktop/windows-network-profile.js';
+import { getLanIpv4Addresses } from './server/lan.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +53,8 @@ let quitOperation = null;
 const activeBatchExports = new Set();
 let allowQuit = false;
 let serverManager = null;
+let networkExposureController = null;
+let networkSettingsAdapterType = null;
 let autoCopyController = null;
 let desktopShell = null;
 let updateManager = null;
@@ -99,10 +103,16 @@ const loadSettings = async () => {
 
 const saveSettings = async () => settingsStore.save(getDesktopSettings());
 
-const getServerStatePayload = () => serverManager?.getState() || ({
-  state: serverState,
-  error: serverError,
-  owned: false,
+const getServerStatePayload = () => ({
+  ...(serverManager?.getState() || {
+    state: serverState,
+    error: serverError,
+    owned: false,
+  }),
+  ...(networkExposureController?.getState() || {
+    lanAccess: 'available',
+    networkProfile: null,
+  }),
 });
 
 const sendDesktopState = () => {
@@ -187,7 +197,9 @@ const checkForUpdates = async ({ userInitiated = false, periodic = false } = {})
 const handleServerStateChanged = (server) => {
   serverState = server.state;
   serverError = server.error;
-  if (serverState !== 'online' && backgroundMode) {
+  if (serverState !== 'online'
+    && backgroundMode
+    && (serverState === 'error' || !networkExposureController?.isTransitioning())) {
     backgroundMode = false;
     saveSettings().catch((saveError) => {
       console.error('Could not save disabled background mode:', saveError);
@@ -252,7 +264,18 @@ serverManager = createServerManager({
   writeStartupLog,
 });
 
-const startServer = () => serverManager.start();
+networkExposureController = createNetworkExposureController({
+  getLanAddresses: getLanIpv4Addresses,
+  getNetworkProfile: (address) => getWindowsNetworkProfile(address, {
+    onAdapterDetected: (adapterType) => {
+      if (adapterType) networkSettingsAdapterType = adapterType;
+    },
+  }),
+  manager: serverManager,
+  onStateChanged: sendDesktopState,
+});
+
+const startServer = () => networkExposureController.start();
 const stopServer = () => serverManager.stop({ onlyIfIdle: true });
 
 desktopShell = createDesktopShell({
@@ -339,6 +362,10 @@ async function requestQuit({ installUpdate = false, warningParent } = {}) {
   }
   const operation = (async () => {
     await Promise.allSettled(activeBatchExports);
+    const exposureController = typeof networkExposureController !== 'undefined'
+      ? networkExposureController
+      : null;
+    await exposureController?.pause?.();
     if (installUpdate) {
       console.log('SnapOverLAN updater: Update install requested; cleanup starting.');
     }
@@ -350,11 +377,13 @@ async function requestQuit({ installUpdate = false, warningParent } = {}) {
       try {
         const result = await stopServer();
         if (result?.uploadBlocked) {
+          await exposureController?.start?.();
           await showUploadBlockedWarning({ installUpdate, parent: warningParent });
           return installUpdate ? 'upload-blocked' : false;
         }
       } catch (error) {
         console.error('Could not stop the SnapOverLAN server during quit:', error);
+        await exposureController?.start?.();
         return false;
       }
     }
@@ -366,6 +395,7 @@ async function requestQuit({ installUpdate = false, warningParent } = {}) {
       if (installStarted) return true;
 
       allowQuit = false;
+      await exposureController?.start?.();
       console.error('SnapOverLAN updater: The downloaded update could not start installing.');
       return false;
     }
@@ -393,8 +423,6 @@ const assertMainWindowFrame = (event, message = 'IPC request was rejected.') => 
     throw new Error(message);
   }
 };
-
-let networkSettingsAdapterType = null;
 
 ipcMain.handle('server:get-state', (event) => {
   assertMainWindowFrame(event);
@@ -500,6 +528,7 @@ if (!gotLock) {
   });
 
   electronApp.on('will-quit', () => {
+    void networkExposureController.dispose();
     updaterDisposed = true;
     clearInterval(updateCheckTimer);
     updateCheckTimer = null;

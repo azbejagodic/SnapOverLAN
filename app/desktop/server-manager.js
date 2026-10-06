@@ -8,6 +8,13 @@ const SERVER_FORCE_STOP_TIMEOUT_MS = 500;
 const LEGACY_SERVER_ERROR = 'An older SnapOverLAN server is running. Stop it once and restart the app.';
 const AUTO_COPY_UNAVAILABLE_MESSAGE = 'Auto-copy unavailable because another SnapOverLAN server is running.';
 
+const isHostCompatible = (identity, host) => {
+  const bindHost = identity?.server?.bindHost;
+  return host === '127.0.0.1'
+    ? ['127.0.0.1', '::ffff:127.0.0.1'].includes(bindHost)
+    : !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(bindHost);
+};
+
 const createServerManager = ({
   electronApp,
   getAutoCopyEnabled,
@@ -113,20 +120,20 @@ const createServerManager = ({
     console.info(`[auto-copy] ${stage}`, details);
   };
 
-  const stopVerifiedReusedServerForAutoCopy = async (identity) => {
+  const stopVerifiedReusedServer = async (identity, purpose) => {
     if (identity?.kind !== 'current'
       || typeof identity.shutdownToken !== 'string'
       || !/^[a-f0-9]{64}$/.test(identity.shutdownToken)) {
       return false;
     }
-    logAutoCopy('requesting ownership from verified reused server');
+    console.info(`SnapOverLAN: requesting ${purpose} from verified reused server.`);
     try {
       await drainReusedServer(identity);
       const released = await client.waitForPortRelease(
         SERVER_STOP_TIMEOUT_MS + SERVER_FORCE_STOP_TIMEOUT_MS,
       );
       if (!released) throw new Error(`Port ${port} was not released.`);
-      logAutoCopy('verified reused server stopped');
+      console.info(`SnapOverLAN: verified reused server stopped for ${purpose}.`);
       return true;
     } catch (error) {
       logAutoCopy('failed', { reason: `Could not stop verified reused server: ${error.message}` });
@@ -134,10 +141,28 @@ const createServerManager = ({
     }
   };
 
-  const startServerInternal = async () => {
+  const stopVerifiedReusedServerForAutoCopy = (identity) => (
+    stopVerifiedReusedServer(identity, 'auto-copy ownership')
+  );
+
+  const startServerInternal = async ({ host = '0.0.0.0', lanExposure = true } = {}) => {
     if (serverState === 'online') return getState();
     setState('starting');
     let existingIdentity = await client.getServerIdentity();
+    if (existingIdentity?.kind === 'current'
+      && existingIdentity.shutdownToken
+      && !isHostCompatible(existingIdentity, host)) {
+      const stoppedForHost = await stopVerifiedReusedServer(existingIdentity, 'network exposure change');
+      if (!stoppedForHost) {
+        const error = 'The existing SnapOverLAN server could not switch network exposure safely.';
+        setState('error', error);
+        throw new Error(error);
+      }
+      existingIdentity = null;
+      verifiedShutdownToken = '';
+      serverLaunchMode = 'offline';
+      autoCopyUnavailableReason = '';
+    }
     if (existingIdentity?.kind === 'current' && existingIdentity.shutdownToken && getAutoCopyEnabled()) {
       const stoppedForOwnership = await stopVerifiedReusedServerForAutoCopy(existingIdentity);
       if (stoppedForOwnership) {
@@ -192,6 +217,8 @@ const createServerManager = ({
       ...process.env,
       SNAPOVERLAN_PARENT_PID: String(process.pid),
       SNAPOVERLAN_LOG_FILE: logPath,
+      SNAPOVERLAN_HOST: host,
+      SNAPOVERLAN_LAN_EXPOSURE: lanExposure ? '1' : '0',
       SNAPOVERLAN_RUN_SERVER: '1',
       SNAPOVERLAN_SERVER_SOURCE: isPackaged ? 'electron-packaged-child' : 'electron-dev-child',
     };
@@ -205,7 +232,8 @@ const createServerManager = ({
       nodePath,
       serverPath,
       serverWorkingDirectory,
-      bindHost: '0.0.0.0',
+      bindHost: host,
+      lanExposure,
       port,
       runtimeDataDir: runtimeDataRoot || path.join(projectRoot, 'data'),
       logFile: logPath,
@@ -274,13 +302,13 @@ const createServerManager = ({
     return getState();
   };
 
-  const start = () => {
+  const start = (options) => {
     if (serverOperation) {
       if (serverOperationType === 'start') return serverOperation;
-      return serverOperation.then(() => start());
+      return serverOperation.then(() => start(options));
     }
     serverOperationType = 'start';
-    const operation = startServerInternal()
+    const operation = startServerInternal(options)
       .catch((error) => {
         if (serverState !== 'error') setState('error', error.message || 'The server failed to start.');
         throw error;

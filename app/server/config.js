@@ -9,7 +9,8 @@ const configuredPort = Number(process.env.SNAPOVERLAN_PORT);
 const PORT = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
   ? configuredPort
   : 8787;
-const HOST = '0.0.0.0';
+const HOST = process.env.SNAPOVERLAN_HOST === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0';
+const LAN_EXPOSURE = process.env.SNAPOVERLAN_LAN_EXPOSURE !== '0';
 const MAX_FILES = 10;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const MAX_ACTIVE_UPLOADS = 1;
@@ -33,6 +34,7 @@ export {
   DATA_DIR,
   DATA_ROOT,
   HOST,
+  LAN_EXPOSURE,
   IS_PACKAGED_RUNTIME,
   LAUNCH_SOURCE,
   MAX_FILES,

@@ -151,6 +151,16 @@ const createHarness = ({
     dialog: { showErrorBox: (...args) => errors.push(args) },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
     normalizeDesktopSettings, updateDesktopSetting, createDesktopShell,
+    getLanIpv4Addresses: () => [],
+    getWindowsNetworkProfile: async () => null,
+    createNetworkExposureController: ({ manager: serverManager }) => ({
+      dispose: async () => {},
+      getState: () => ({ lanAccess: 'available', networkProfile: null }),
+      isTransitioning: () => false,
+      pause: async () => {},
+      refresh: () => serverManager.start(),
+      start: () => serverManager.start(),
+    }),
     createRendererServerClient: () => async () => ({}),
     createSettingsStore: () => ({
       load: async () => settings, save: async (next) => { Object.assign(settings, next); },

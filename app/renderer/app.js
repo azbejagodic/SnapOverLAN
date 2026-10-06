@@ -41,6 +41,7 @@ let backgroundModeEnabled = false;
 let autoCopyMessageTimer = null;
 let networkProfileRequestId = 0;
 let networkProfileAddress = '';
+let desktopLanAccess = 'available';
 
 function clearNetworkProfileWarning() {
   networkProfileRequestId += 1;
@@ -50,6 +51,12 @@ function clearNetworkProfileWarning() {
 }
 
 async function refreshNetworkProfile(data) {
+  if (desktopLanAccess === 'blocked-public') {
+    networkProfileRequestId += 1;
+    networkProfileAddress = '';
+    if (publicNetworkWarning) publicNetworkWarning.hidden = false;
+    return;
+  }
   const address = parseUrl(choosePhoneUrl({ urls: data.lanUrls, primaryUrl: data.primaryLanUrl })?.url)?.hostname;
   if (!address || typeof window.snapOverLAN?.getNetworkProfile !== 'function') {
     clearNetworkProfileWarning();
@@ -152,6 +159,12 @@ async function syncDesktopControls() {
       window.snapOverLAN.getServerState(),
       window.snapOverLAN.getBackgroundMode(),
     ]);
+    desktopLanAccess = server?.lanAccess || 'available';
+    if (desktopLanAccess === 'blocked-public') {
+      networkProfileRequestId += 1;
+      networkProfileAddress = '';
+      if (publicNetworkWarning) publicNetworkWarning.hidden = false;
+    }
     backgroundModeEnabled = server?.state === 'online' && Boolean(background);
     setDesktopServerState(server?.state);
     if (server?.state === 'error' || server?.state === 'offline') {
@@ -477,6 +490,12 @@ window.addEventListener('pagehide', stopAutoRefresh);
 refreshDashboard({ source: 'initial' });
 syncDesktopControls();
 window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
+  desktopLanAccess = server?.lanAccess || 'available';
+  if (desktopLanAccess === 'blocked-public') {
+    networkProfileRequestId += 1;
+    networkProfileAddress = '';
+    if (publicNetworkWarning) publicNetworkWarning.hidden = false;
+  } else clearNetworkProfileWarning();
   backgroundModeEnabled = server?.state === 'online' && Boolean(backgroundMode);
   setDesktopServerState(server?.state);
   if (server?.state === 'starting') renderStatus({ state: 'checking' });

@@ -6,6 +6,7 @@ import {
   DATA_ROOT,
   HOST,
   IS_PACKAGED_RUNTIME,
+  LAN_EXPOSURE,
   LAUNCH_SOURCE,
   PORT,
   STARTUP_LOG_PATH,
@@ -36,6 +37,7 @@ const MDNS_REFRESH_INTERVAL_MS = 15_000;
 let mdnsMonitorTimer = null;
 let mdnsMonitorEnabled = false;
 let mdnsRefreshPromise = null;
+let lanExposureEnabled = LAN_EXPOSURE;
 
 const isMdnsAddressCurrent = (lanUrls) => mdnsStatus?.started
   && mdnsStatus.ipv4Addresses?.length > 0
@@ -45,7 +47,7 @@ const getServerStatus = () => {
   const address = serverInstance?.address?.();
   const boundAddress = address && typeof address === 'object' ? address.address : HOST;
   const boundPort = address && typeof address === 'object' ? address.port : PORT;
-  const lanUrls = getPhoneUrlRecords({ port: boundPort || PORT });
+  const lanUrls = lanExposureEnabled ? getPhoneUrlRecords({ port: boundPort || PORT }) : [];
 
   return {
     status: serverInstance?.listening && serverReady ? 'listening' : 'starting',
@@ -148,6 +150,7 @@ const app = createServerApp({
 
 const startServer = async ({
   host = HOST,
+  lanExposure = LAN_EXPOSURE,
   log = true,
   mdnsFactory = createMdnsAdvertiser,
   port = PORT,
@@ -157,6 +160,7 @@ const startServer = async ({
   }
 
   await Promise.all([ensureStorageDirectories(), loadPersistentIdentity()]);
+  lanExposureEnabled = Boolean(lanExposure);
 
   return new Promise((resolve, reject) => {
     const server = app.listen(port, host, async () => {
@@ -166,7 +170,7 @@ const startServer = async ({
       const listeningPort = listeningAddress && typeof listeningAddress === 'object'
         ? listeningAddress.port
         : port;
-      mdnsMonitorEnabled = true;
+      mdnsMonitorEnabled = lanExposureEnabled;
       const mdnsOptions = { mdnsFactory, port: listeningPort };
       await refreshMdnsAdvertisement(mdnsOptions);
       if (mdnsMonitorEnabled) {

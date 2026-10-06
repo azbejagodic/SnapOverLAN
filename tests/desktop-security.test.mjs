@@ -22,6 +22,7 @@ const createIpcHarness = () => {
     getServerStatePayload: () => { calls.push(['state']); return state; },
     rendererServerRequest: async (...args) => { calls.push(['request', ...args]); return response; },
     startServer: async () => { calls.push(['start']); return state; },
+    networkSettingsAdapterType: null,
     getWindowsNetworkProfile: async (address, { onAdapterDetected }) => {
       calls.push(['profile', address]); onAdapterDetected('ethernet'); return 'Public';
     },

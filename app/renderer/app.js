@@ -54,7 +54,9 @@ function renderNetworkProfileGuidance(details) {
     : 'Phone access is blocked because this network is set to Public.';
   if (networkProfileInstructions) networkProfileInstructions.textContent = wifi
     ? `In Windows Settings, open ${ssid ? `'${ssid}'` : 'your connected Wi-Fi network'} > Properties > Network profile type > Private.`
-    : 'Under Network profile type, select Private network.';
+    : details?.adapterType === 'ethernet'
+      ? 'In Windows Settings, open Ethernet > Properties > Network profile type > Private.'
+      : 'Under Network profile type, select Private network.';
 }
 
 function clearNetworkProfileWarning() {

@@ -342,7 +342,9 @@ for (const ssid of ['MyNetwork', null, '']) {
     await h.refresh();
     assert.equal(h.elements.publicNetworkWarning.hidden, false);
     const instructions = h.elements.networkProfileInstructions.textContent;
-    assert.match(instructions, /Properties > Network profile type > Private/);
+    assert.equal(instructions, ssid
+      ? "In Windows Settings, open 'MyNetwork' > Properties > Network profile type > Private."
+      : 'In Windows Settings, open your connected Wi-Fi network > Properties > Network profile type > Private.');
     if (ssid) {
       assert.match(h.elements.publicNetworkDescription.textContent, /Wi-Fi network 'MyNetwork' is set to Public/);
       assert.match(instructions, /'MyNetwork'/);
@@ -355,11 +357,17 @@ for (const ssid of ['MyNetwork', null, '']) {
   });
 }
 
-for (const adapterType of ['ethernet', null]) {
-  test(`Public ${adapterType} adapter retains generic profile instructions without Wi-Fi data`, async () => {
+for (const [adapterType, instructions] of [
+  ['ethernet', 'In Windows Settings, open Ethernet > Properties > Network profile type > Private.'],
+  [null, 'Under Network profile type, select Private network.'],
+]) {
+  test(`Public ${adapterType} adapter provides its profile instructions without Wi-Fi data`, async () => {
     const h = await createHarness(status([]), null, 'blocked-public', { adapterType, ssid: 'stale' });
     await h.refresh();
-    assert.equal(h.elements.networkProfileInstructions.textContent, 'Under Network profile type, select Private network.');
+    assert.equal(h.elements.networkProfileInstructions.textContent, instructions);
+    assert.equal(h.elements.publicNetworkWarning.hidden, false);
+    await h.elements.openNetworkSettingsBtn.click();
+    assert.equal(h.getSettingsOpened(), 1);
     assert.doesNotMatch(h.elements.publicNetworkDescription.textContent, /Wi-Fi|stale/);
   });
 }

@@ -54,7 +54,6 @@ const activeBatchExports = new Set();
 let allowQuit = false;
 let serverManager = null;
 let networkExposureController = null;
-let networkSettingsAdapterType = null;
 const networkProfileDetails = new Map();
 
 const getDesktopNetworkProfile = async (address) => {
@@ -291,7 +290,6 @@ networkExposureController = createNetworkExposureController({
   getLanAddresses: getLanIpv4Addresses,
   getNetworkProfile: async (address) => {
     const details = await getDesktopNetworkProfile(address);
-    networkSettingsAdapterType = getPublicNetworkDetails().adapterType;
     return details.profile;
   },
   manager: serverManager,
@@ -462,12 +460,11 @@ ipcMain.handle('server:retry', (event) => {
 ipcMain.handle('network:get-profile', async (event, address) => {
   assertMainWindowFrame(event);
   const details = await getDesktopNetworkProfile(address);
-  networkSettingsAdapterType = details.adapterType;
   return details;
 });
 ipcMain.handle('network:open-settings', (event) => {
   assertMainWindowFrame(event);
-  return openWindowsNetworkSettings({ shell, adapterType: networkSettingsAdapterType });
+  return openWindowsNetworkSettings({ shell });
 });
 ipcMain.handle('background:get', (event) => {
   assertMainWindowFrame(event);

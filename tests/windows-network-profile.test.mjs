@@ -134,14 +134,14 @@ test('settings action opens only the fixed Windows network page and handles fail
   } }), false);
 });
 
-for (const [medium, adapterType, settingsUri] of [
-  [14, 'ethernet', 'ms-settings:network-ethernet'],
-  [9, 'wifi', 'ms-settings:network-wifi'],
-  [1, 'wifi', 'ms-settings:network-wifi'],
-  [0, null, 'ms-settings:network-status'],
-  [null, null, 'ms-settings:network-status'],
+for (const [medium, adapterType] of [
+  [14, 'ethernet'],
+  [9, 'wifi'],
+  [1, 'wifi'],
+  [0, null],
+  [null, null],
 ]) {
-  test(`trusted adapter medium ${medium} opens ${settingsUri} without changing the detected profile`, async () => {
+  test(`trusted adapter medium ${medium} opens the network overview without changing the detected profile`, async () => {
     let detectedAdapter = 'stale';
     const result = await getWindowsNetworkProfile('192.168.1.20', {
       platform: 'win32',
@@ -156,11 +156,11 @@ for (const [medium, adapterType, settingsUri] of [
     assert.equal(await openWindowsNetworkSettings({
       shell: { openExternal: async (url) => opened.push(url) }, platform: 'win32', adapterType: detectedAdapter,
     }), true);
-    assert.deepEqual(opened, [settingsUri]);
+    assert.deepEqual(opened, ['ms-settings:network-status']);
   });
 }
 
-test('failed or ambiguous detection clears the settings hint to the general network fallback', async () => {
+test('failed or ambiguous detection clears the adapter guidance metadata', async () => {
   for (const output of ['', '[{"NetworkCategory":"Public","NdisPhysicalMedium":14},{"NetworkCategory":"Public","NdisPhysicalMedium":9}]']) {
     let adapterType = 'ethernet';
     await getWindowsNetworkProfile('192.168.1.20', {

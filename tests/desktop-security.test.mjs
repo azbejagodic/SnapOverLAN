@@ -5,6 +5,7 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { createDesktopShell, isSafeExternalUrl } from '../app/desktop/shell.js';
 import { createRendererServerClient } from '../app/desktop/renderer-server-client.js';
+import { openWindowsNetworkSettings } from '../app/desktop/windows-network-profile.js';
 
 const mainSource = await readFile(new URL('../app/main.js', import.meta.url), 'utf8');
 const handlersSource = mainSource.slice(mainSource.indexOf('const handleServerControl ='), mainSource.indexOf('const gotLock ='));
@@ -22,12 +23,11 @@ const createIpcHarness = () => {
     getServerStatePayload: () => { calls.push(['state']); return state; },
     rendererServerRequest: async (...args) => { calls.push(['request', ...args]); return response; },
     startServer: async () => { calls.push(['start']); return state; },
-    networkSettingsAdapterType: null,
     networkProfileDetails: new Map(),
     getWindowsNetworkProfile: async (address, { onAdapterDetected }) => {
       calls.push(['profile', address]); onAdapterDetected('ethernet'); return 'Public';
     },
-    openWindowsNetworkSettings: async ({ adapterType }) => { calls.push(['network-settings', adapterType]); return true; },
+    openWindowsNetworkSettings: (options) => openWindowsNetworkSettings({ ...options, platform: 'win32' }),
     backgroundMode: false,
     setBackgroundMode: async (enabled) => {
       calls.push(['background', enabled]);
@@ -39,7 +39,10 @@ const createIpcHarness = () => {
       calls.push(['download', options.batchId, options.destinationDir, options.serverOrigin]);
       return download;
     },
-    shell: { openPath: async (directory) => { calls.push(['open', directory]); return ''; } },
+    shell: {
+      openPath: async (directory) => { calls.push(['open', directory]); return ''; },
+      openExternal: async (uri) => { calls.push(['network-settings', uri]); },
+    },
     SERVER_ORIGIN: 'http://localhost:8787',
     console,
   };
@@ -53,7 +56,7 @@ const channels = [
   ['server:request', ['/api/batches', 'GET'], (harness) => harness.response, [['request', '/api/batches', 'GET']]],
   ['server:retry', [], (harness) => harness.state, [['start']]],
   ['network:get-profile', ['192.168.1.20'], () => ({ profile: 'Public', adapterType: 'ethernet', ssid: null }), [['profile', '192.168.1.20']]],
-  ['network:open-settings', [], () => true, [['network-settings', null]]],
+  ['network:open-settings', [], () => true, [['network-settings', 'ms-settings:network-status']]],
   ['background:get', [], () => false, []],
   ['background:set', [true], () => true, [['background', true]]],
   ['batch:download', ['batch_test'], (harness) => harness.download,
@@ -107,15 +110,15 @@ test('sender validation tests cover every renderer IPC handler', () => {
   assert.equal(createIpcHarness().handlers.size, channels.length);
 });
 
-test('settings IPC uses the main-process adapter hint and ignores renderer-supplied URIs and adapter types', async () => {
+test('settings IPC opens the network overview and ignores renderer-supplied URIs and adapter types', async () => {
   const harness = createIpcHarness();
   const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
   await harness.handlers.get('network:get-profile')(event, '192.168.1.20');
   await harness.handlers.get('network:open-settings')(event, 'ms-settings:privacy', 'wifi');
-  assert.deepEqual(harness.calls, [['profile', '192.168.1.20'], ['network-settings', 'ethernet']]);
+  assert.deepEqual(harness.calls, [['profile', '192.168.1.20'], ['network-settings', 'ms-settings:network-status']]);
 });
 
-test('settings retains the known adapter during refresh and updates it only when detection completes', async () => {
+test('settings destination stays fixed during refresh while profile IPC updates adapter guidance', async () => {
   const harness = createIpcHarness();
   const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
   await harness.handlers.get('network:get-profile')(event, '192.168.1.20');
@@ -128,11 +131,18 @@ test('settings retains the known adapter during refresh and updates it only when
   };
   const detecting = harness.handlers.get('network:get-profile')(event, '192.168.1.20');
   await harness.handlers.get('network:open-settings')(event);
-  assert.deepEqual(harness.calls.at(-1), ['network-settings', 'ethernet']);
+  assert.deepEqual(harness.calls.at(-1), ['network-settings', 'ms-settings:network-status']);
   finishDetection();
-  await detecting;
+  assert.deepEqual({ ...await detecting }, { profile: 'Public', adapterType: 'wifi', ssid: null });
   await harness.handlers.get('network:open-settings')(event);
-  assert.deepEqual(harness.calls.at(-1), ['network-settings', 'wifi']);
+  assert.deepEqual(harness.calls.at(-1), ['network-settings', 'ms-settings:network-status']);
+});
+
+test('settings IPC returns false safely when opening Settings fails', async () => {
+  const harness = createIpcHarness();
+  harness.context.shell.openExternal = async () => { throw new Error('settings unavailable'); };
+  const event = { sender: harness.sender, senderFrame: harness.sender.mainFrame };
+  assert.equal(await harness.handlers.get('network:open-settings')(event), false);
 });
 
 test('profile IPC forwards Wi-Fi SSID and clears it when replaced by an unknown adapter', async () => {
@@ -153,7 +163,7 @@ test('profile IPC forwards Wi-Fi SSID and clears it when replaced by an unknown 
     profile: null, adapterType: null, ssid: null,
   });
   await h.handlers.get('network:open-settings')(event);
-  assert.deepEqual(h.calls.at(-1), ['network-settings', null]);
+  assert.deepEqual(h.calls.at(-1), ['network-settings', 'ms-settings:network-status']);
 });
 
 for (const [channel, args, expectedResult, expectedCalls] of channels) {

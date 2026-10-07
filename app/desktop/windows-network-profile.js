@@ -68,12 +68,10 @@ export async function getWindowsNetworkProfile(address, {
   }
 }
 
-export async function openWindowsNetworkSettings({ shell, adapterType = null, platform = process.platform }) {
+export async function openWindowsNetworkSettings({ shell, platform = process.platform }) {
   if (platform !== 'win32') return false;
   try {
-    const settingsUri = adapterType === 'ethernet' ? 'ms-settings:network-ethernet'
-      : adapterType === 'wifi' ? 'ms-settings:network-wifi' : 'ms-settings:network-status';
-    await shell.openExternal(settingsUri);
+    await shell.openExternal('ms-settings:network-status');
     return true;
   } catch {
     return false;

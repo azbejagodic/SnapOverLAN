@@ -141,17 +141,26 @@ function setBadge(element, baseClass, state, label) {
   target.textContent = label;
 }
 
+function onlineStatusLabel() {
+  if (desktopLanAccess === 'blocked-public') return 'Phone access blocked';
+  return lanAvailable ? 'Server online' : 'Phone access unavailable';
+}
+
 function renderStatus({ state } = {}) {
   const statusState = state || (
     lastServerStatusData?.status === 'listening' ? 'online' : 'checking'
   );
-  const displayState = statusState === 'online' && !lanAvailable ? 'offline' : statusState;
-  const label = displayState === 'online'
-    ? 'Server online'
-    : displayState === 'offline'
+  const displayState = statusState === 'online' && (!lanAvailable || desktopLanAccess === 'blocked-public') ? 'offline' : statusState;
+  const label = statusState === 'online'
+    ? onlineStatusLabel()
+    : statusState === 'offline'
       ? 'Server unavailable'
       : 'Checking server';
   setBadge(connectionPill, 'server-line', displayState, label);
+  if (statusState === 'offline' && diagnosticsSummary) {
+    diagnosticsSummary.textContent = 'Server unavailable';
+    diagnosticsSummary.className = 'summary status-badge offline';
+  }
 }
 
 function renderDesktopControls() {
@@ -195,6 +204,10 @@ async function syncDesktopControls() {
     }
     backgroundModeEnabled = server?.state === 'online' && Boolean(background);
     setDesktopServerState(server?.state);
+    if (server?.state === 'online' && lastServerStatusData) {
+      renderStatus({ state: 'online' });
+      renderDiagnostics(lastServerStatusData);
+    }
     if (server?.state === 'error' || server?.state === 'offline') {
       lastServerStatusData = null;
       batchHistory?.setAvailable(false);
@@ -279,9 +292,9 @@ function renderDiagnostics(data) {
   diagnosticsList.innerHTML = '';
   const isListening = data.status === 'listening';
   if (diagnosticsSummary) {
-    const available = isListening && lanAvailable;
+    const available = isListening && lanAvailable && desktopLanAccess !== 'blocked-public';
     diagnosticsSummary.className = `summary status-badge ${available ? 'online' : 'offline'}`;
-    diagnosticsSummary.textContent = available ? 'Server online' : 'Server unavailable';
+    diagnosticsSummary.textContent = isListening ? onlineStatusLabel() : 'Server unavailable';
   }
   addDiagnosticRow('Server status', data.status || 'unknown');
   addDiagnosticRow('Server source', data.launchSource || 'unknown');
@@ -542,7 +555,10 @@ window.snapOverLAN?.onDesktopStateChanged?.(({ server, backgroundMode }) => {
     renderPhoneSetup(null);
     renderStatus({ state: 'offline' });
   }
-  else if (server?.state === 'online') renderStatus({ state: 'online' });
+  else if (server?.state === 'online') {
+    renderStatus({ state: 'online' });
+    if (lastServerStatusData) renderDiagnostics(lastServerStatusData);
+  }
 });
 window.snapOverLAN?.onAutoCopyResult?.(showAutoCopyResult);
 startAutoRefresh();

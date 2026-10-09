@@ -118,7 +118,7 @@ const createHarness = async (
     getSettingsOpened: () => settingsOpened,
     setResponse: (value) => { response = value; },
     refresh: () => interval(),
-    emitServerState: (state) => stateListener({ server: { state }, backgroundMode: false }),
+    emitServerState: (state, lanAccess = 'available') => stateListener({ server: { state, lanAccess }, backgroundMode: false }),
   };
 };
 
@@ -137,7 +137,7 @@ test(`${address} shows green Server online with the stable phone QR`, async () =
 
 test('healthy server without LAN stays online, ignores a retained mDNS name, and disables QR', async () => {
   const h = await createHarness(status([]));
-  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access unavailable');
   assert.equal(h.elements.connectionPill.className, 'server-line offline');
   assert.equal(h.renderer.getState(), 'online');
   assert.equal(h.elements.backgroundToggleBtn.disabled, false);
@@ -147,7 +147,7 @@ test('healthy server without LAN stays online, ignores a retained mDNS name, and
   h.elements.qrBtn.click();
   assert.equal(h.elements.qrModal.hidden, true);
   h.emitServerState('online');
-  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access unavailable');
 });
 
 for (const url of [
@@ -158,7 +158,7 @@ for (const url of [
 ]) {
   test(`${url} alone does not count as usable LAN`, async () => {
     const h = await createHarness(status([url]));
-    assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+    assert.equal(h.elements.connectionPill.textContent, 'Phone access unavailable');
     assert.equal(h.elements.connectionPill.className, 'server-line offline');
     assert.equal(h.elements.phoneUrl.textContent, '');
     assert.equal(h.elements.qrBtn.disabled, true);
@@ -172,7 +172,7 @@ test('automatic refresh clears stale URLs on LAN loss and restores the new phone
   assert.equal(h.elements.qrModal.hidden, false);
   h.setResponse(status([]));
   await h.refresh();
-  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access unavailable');
   assert.equal(h.elements.connectionPill.className, 'server-line offline');
   assert.equal(h.elements.phoneUrl.textContent, '');
   assert.equal(h.elements.phoneUrl.title, '');
@@ -375,12 +375,30 @@ for (const [adapterType, instructions] of [
 test('trusted Public-network status keeps the local desktop online while LAN setup stays unavailable', async () => {
   const h = await createHarness(status([]), null, 'blocked-public');
   assert.equal(h.elements.publicNetworkWarning.hidden, false);
-  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access blocked');
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Phone access blocked');
   assert.equal(h.renderer.getState(), 'online');
   assert.equal(h.elements.backgroundToggleBtn.disabled, false);
   assert.equal(h.elements.qrBtn.disabled, true);
   assert.equal(h.elements.phoneUrl.textContent, '');
   assert.deepEqual(h.profileRequests, []);
+});
+
+test('network labels follow trusted Public, unavailable, and server-down states without changing controls', async () => {
+  const h = await createHarness(status([]));
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access unavailable');
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Phone access unavailable');
+  h.emitServerState('online', 'blocked-public');
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access blocked');
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Phone access blocked');
+  assert.equal(h.elements.qrBtn.disabled, true);
+  assert.equal(h.elements.backgroundToggleBtn.disabled, false);
+  h.emitServerState('online');
+  assert.equal(h.elements.connectionPill.textContent, 'Phone access unavailable');
+  h.emitServerState('offline', 'blocked-public');
+  assert.equal(h.elements.connectionPill.textContent, 'Server unavailable');
+  assert.equal(h.elements.diagnosticsSummary.textContent, 'Server unavailable');
+  assert.equal(h.elements.backgroundToggleBtn.disabled, true);
 });
 
 for (const urls of [[lanUrl], []]) {

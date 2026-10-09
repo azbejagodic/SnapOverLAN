@@ -248,8 +248,28 @@ test('phone selection tray keeps only the first 10 photos', async () => {
 
   await elements.galleryInput.dispatch('change');
   assert.equal(elements.selectedCount.textContent, 'Selected: 10 / 10');
-  assert.match(elements.status.textContent, /Tray limit is 10, extra photos were skipped/);
+  assert.equal(elements.status.textContent, 'Added 10 photos. 1 extra photo skipped. Maximum 10 photos.');
+  assert.equal(elements.status.className, '');
 });
+
+for (const [existing, supported, unsupported, message] of [
+  [0, 1, 2, 'Added 1 photo. 2 unsupported files skipped.'],
+  [0, 2, 1, 'Added 2 photos. 1 unsupported file skipped.'],
+  [8, 5, 2, 'Added 2 photos. 2 unsupported files skipped. 3 extra photos skipped. Maximum 10 photos.'],
+]) {
+  test(`partial phone selection reports truthful counts with neutral styling: ${message}`, async () => {
+    const elements = createHarness();
+    const photos = (count) => Array.from({ length: count }, (_, i) => ({ name: `${i}.jpg`, type: 'image/jpeg', size: 10 }));
+    elements.galleryInput.files = photos(existing);
+    await elements.galleryInput.dispatch('change');
+    elements.galleryInput.files = [...photos(supported), ...Array.from({ length: unsupported }, () => ({ type: 'video/mp4' }))];
+    await elements.galleryInput.dispatch('change');
+    assert.equal(elements.status.textContent, message);
+    assert.equal(elements.status.className, '');
+    assert.equal(elements.selectedCount.textContent, `Selected: ${Math.min(10, existing + supported)} / 10`);
+    assert.equal(elements.uploadBtn.disabled, false);
+  });
+}
 
 test('disabling Fast Upload appends the original selected file untouched', async () => {
   let decodeCount = 0;
@@ -413,22 +433,22 @@ test('an upload network failure is caught and keeps the selected file available'
   assert.equal(elements.uploadBtn.disabled, false);
 
   await elements.uploadBtn.dispatch('click');
-  assert.equal(elements.status.textContent, 'Upload interrupted. Check your Wi-Fi connection and try again.');
+  assert.equal(elements.status.textContent, 'Connection lost during upload. Check your Wi-Fi and tap Upload to try again. Your photos are still selected.');
   assert.equal(elements.status.className, 'error');
   assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
   assert.equal(elements.uploadBtn.disabled, false);
 });
 
-const rejectedMessage = 'Upload rejected. Check the selected photos and try again.';
-const serverFailureMessage = 'SnapOverLAN could not complete the upload. Try again.';
+const rejectedMessage = "Couldn't complete the upload. Please try again. If it keeps happening, reselect your photos.";
+const serverFailureMessage = "Couldn't finish the upload. Please try again. Your photos are still selected.";
 const invalidPhotoMessage = 'One or more selected files are not valid supported photos.';
 const heifFailureMessage = 'One or more HEIC/HEIF photos could not be read.';
-const pixelLimitMessage = 'One or more photos exceed the 60 MP upload limit.';
+const pixelLimitMessage = 'One or more photos exceed 60 megapixels or have invalid dimensions. Choose different photos and try again.';
 const uploadErrorCases = [
   ['busy upload', 429, { error: 'Another upload is in progress. Try again shortly.' }, 'Another upload is in progress. Try again shortly.'],
   ['low disk', 507, { error: 'The PC needs more free disk space.' }, 'The PC needs more free disk space.'],
-  ['20MB size', 400, { error: 'Each image must be <= 20MB.' }, 'Each photo must be 20 MB or smaller.'],
-  ['worker size', 400, { error: 'Invalid image: Image is empty or exceeds the 20MB file limit.' }, 'Each photo must be 20 MB or smaller.'],
+  ['20MB size', 400, { error: 'Each image must be <= 20MB.' }, 'One or more photos are empty or larger than 20 MB. Check your selection and try again.'],
+  ['worker size', 400, { error: 'Invalid image: Image is empty or exceeds the 20MB file limit.' }, 'One or more photos are empty or larger than 20 MB. Check your selection and try again.'],
   ['10 files', 400, { error: 'Maximum 10 files are allowed.' }, 'You can upload up to 10 photos at a time.'],
   ['unsupported MIME', 400, { error: 'Only JPEG, PNG, WebP, HEIC, and HEIF images are allowed.' }, 'Only JPEG, PNG, WebP, HEIC, and HEIF photos are supported.'],
   ['60MP dimensions', 400, { error: 'Invalid image: Image exceeds the 60 megapixel upload limit or has invalid dimensions.' }, pixelLimitMessage],
@@ -459,9 +479,9 @@ const uploadErrorCases = [
   ['server failure', 500, { error: 'Sharp/libheif internal exception at C:/private/image.jpg' }, serverFailureMessage],
   ['5xx overrides known validation error', 502, { error: 'Each image must be <= 20MB.' }, serverFailureMessage],
   ['non-JSON server failure', 500, undefined, serverFailureMessage],
-  ['shutdown', 503, { error: 'Each image must be <= 20MB.' }, 'SnapOverLAN is shutting down. Try again after reopening it.'],
-  ['non-JSON shutdown', 503, undefined, 'SnapOverLAN is shutting down. Try again after reopening it.'],
-  ['unexpected HTTP status', 302, { error: 'Each image must be <= 20MB.' }, 'Upload failed. Your selected files are still available.'],
+  ['shutdown', 503, { error: 'Each image must be <= 20MB.' }, 'SnapOverLAN is closing on your PC. Open it again, then retry your upload.'],
+  ['non-JSON shutdown', 503, undefined, 'SnapOverLAN is closing on your PC. Open it again, then retry your upload.'],
+  ['unexpected HTTP status', 302, { error: 'Each image must be <= 20MB.' }, 'Something went wrong with the upload. Tap Upload to try again. Your photos are still selected.'],
 ];
 
 for (const [label, status, body, message] of uploadErrorCases) {
@@ -599,7 +619,7 @@ test('missing or invalid session acknowledgement fails safely without optimizati
     await elements.galleryInput.dispatch('change');
     await elements.uploadBtn.dispatch('click');
     assert.equal(decoded, 0);
-    assert.match(elements.status.textContent, /Could not start a protected send session/);
+    assert.equal(elements.status.textContent, "Couldn't start the upload. Make sure SnapOverLAN is open on your PC and both devices are on the same network, then try again.");
     assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
     assert.equal(elements.uploadBtn.disabled, false);
   }
@@ -657,7 +677,9 @@ test('preparation heartbeats renew every 10 seconds; failed renewal cancels and 
   failRenewal = true;
   t.mock.timers.tick(10000);
   await sending;
-  assert.match(elements.status.textContent, /Send interrupted/);
+  assert.equal(elements.status.textContent, 'Connection interrupted. Check your connection and tap Upload to try again. Your photos are still selected.');
+  assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
+  assert.equal(elements.uploadBtn.disabled, false);
   assert.equal(elements.sessionRequests.at(-1)[0].endsWith('/end'), true);
   finishDecode();
   await flushSend();
@@ -671,7 +693,7 @@ test('an expired lease at the upload boundary ends the session and preserves pho
   elements.galleryInput.files = [{ ...largeSendPhoto, size: 10 }];
   await elements.galleryInput.dispatch('change');
   await elements.uploadBtn.dispatch('click');
-  assert.equal(elements.status.textContent, 'Send session expired. Press Upload again.');
+  assert.equal(elements.status.textContent, 'This upload attempt expired. Tap Upload to try again.');
   assert.equal(elements.uploadBtn.disabled, false);
   assert.equal(elements.sessionRequests.at(-1)[0].endsWith('/end'), true);
 });
@@ -710,7 +732,7 @@ test('a stalled session acknowledgement times out before any optimization starts
   const sending = elements.uploadBtn.dispatch('click');
   t.mock.timers.tick(10000);
   await sending;
-  assert.match(elements.status.textContent, /Could not start a protected send session/);
+  assert.equal(elements.status.textContent, "Couldn't start the upload. Make sure SnapOverLAN is open on your PC and both devices are on the same network, then try again.");
   assert.equal(elements.uploadBtn.disabled, false);
   assert.equal(elements.selectedCount.textContent, 'Selected: 1 / 10');
 });

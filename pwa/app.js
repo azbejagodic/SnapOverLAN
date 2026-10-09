@@ -344,10 +344,13 @@ function appendFiles(fileList) {
   const acceptedFiles = supportedFiles.slice(0, availableSlots);
   selectedFiles.push(...acceptedFiles);
 
-  if (supportedFiles.length < files.length) {
-    setStatus(`Added ${acceptedFiles.length} photo${acceptedFiles.length > 1 ? 's' : ''}. Unsupported files were skipped.`, 'error');
-  } else if (acceptedFiles.length < supportedFiles.length) {
-    setStatus(`Added ${acceptedFiles.length}. Tray limit is ${MAX_FILES}, extra photos were skipped.`, 'error');
+  const unsupportedCount = files.length - supportedFiles.length;
+  const extraCount = supportedFiles.length - acceptedFiles.length;
+  if (unsupportedCount || extraCount) {
+    const messages = [`Added ${acceptedFiles.length} photo${acceptedFiles.length === 1 ? '' : 's'}.`];
+    if (unsupportedCount) messages.push(`${unsupportedCount} unsupported file${unsupportedCount === 1 ? '' : 's'} skipped.`);
+    if (extraCount) messages.push(`${extraCount} extra photo${extraCount === 1 ? '' : 's'} skipped. Maximum ${MAX_FILES} photos.`);
+    setStatus(messages.join(' '));
   } else {
     setStatus(`Added ${acceptedFiles.length} photo${acceptedFiles.length > 1 ? 's' : ''} to tray.`);
   }
@@ -385,14 +388,15 @@ async function getUploadErrorMessage(response) {
 
   if (response.status === 429) return 'Another upload is in progress. Try again shortly.';
   if (response.status === 507) return 'The PC needs more free disk space.';
-  if (response.status === 503) return 'SnapOverLAN is shutting down. Try again after reopening it.';
-  if (response.status === 410) return 'Send session expired. Press Upload again.';
-  if (response.status >= 500 && response.status < 600) return 'SnapOverLAN could not complete the upload. Try again.';
+  if (error) console.warn('Upload request rejected:', response.status, error);
+  if (response.status === 503) return 'SnapOverLAN is closing on your PC. Open it again, then retry your upload.';
+  if (response.status === 410) return 'This upload attempt expired. Tap Upload to try again.';
+  if (response.status >= 500 && response.status < 600) return "Couldn't finish the upload. Please try again. Your photos are still selected.";
   if (response.status >= 400 && response.status < 500) {
     switch (error) {
       case 'Each image must be <= 20MB.':
       case 'Invalid image: Image is empty or exceeds the 20MB file limit.':
-        return 'Each photo must be 20 MB or smaller.';
+        return 'One or more photos are empty or larger than 20 MB. Check your selection and try again.';
       case 'Maximum 10 files are allowed.':
         return 'You can upload up to 10 photos at a time.';
       case 'Only JPEG, PNG, WebP, HEIC, and HEIF images are allowed.':
@@ -400,7 +404,7 @@ async function getUploadErrorMessage(response) {
       case 'Invalid image: Image exceeds the 60 megapixel upload limit or has invalid dimensions.':
       case 'Invalid image: HEIF images exceed the 60 megapixel upload limit.':
       case 'Invalid image: Input image exceeds pixel limit':
-        return 'One or more photos exceed the 60 MP upload limit.';
+        return 'One or more photos exceed 60 megapixels or have invalid dimensions. Choose different photos and try again.';
       case 'Invalid image: AVIF uploads are not supported.':
         return 'AVIF photos are not supported. Use JPEG, PNG, WebP, HEIC, or HEIF.';
       case 'Invalid image: Unsupported HEIF image compression.':
@@ -422,9 +426,9 @@ async function getUploadErrorMessage(response) {
         return 'One or more selected files are not valid supported photos.';
       }
     }
-    return 'Upload rejected. Check the selected photos and try again.';
+    return "Couldn't complete the upload. Please try again. If it keeps happening, reselect your photos.";
   }
-  return 'Upload failed. Your selected files are still available.';
+  return 'Something went wrong with the upload. Tap Upload to try again. Your photos are still selected.';
 }
 
 uploadBtn.addEventListener('click', async () => {
@@ -438,7 +442,7 @@ uploadBtn.addEventListener('click', async () => {
   updateSelectedCount();
   const operation = {
     controller: new AbortController(), sessionId: '', heartbeatTimer: null, heartbeatRequest: null,
-    failureMessage: 'Could not start a protected send session. Check the connection to your PC and try again.',
+    failureMessage: "Couldn't start the upload. Make sure SnapOverLAN is open on your PC and both devices are on the same network, then try again.",
   };
   activeSendOperation = operation;
   if (cancelSendBtn) cancelSendBtn.hidden = false;
@@ -452,7 +456,7 @@ uploadBtn.addEventListener('click', async () => {
     }
     operation.sessionId = session.sessionId;
     checkSendOperation(operation);
-    operation.failureMessage = 'Send interrupted. Check the connection to your PC and press Upload again.';
+    operation.failureMessage = 'Connection interrupted. Check your connection and tap Upload to try again. Your photos are still selected.';
     scheduleSendHeartbeat(operation);
     let preparedFiles = uploadFiles;
     if (fastUploadEnabled && uploadFiles.some(shouldOptimizeImage)) {
@@ -481,7 +485,7 @@ uploadBtn.addEventListener('click', async () => {
         signal: operation.controller.signal,
       });
     } catch (error) {
-      if (!operation.controller.signal.aborted) operation.failureMessage = 'Upload interrupted. Check your Wi-Fi connection and try again.';
+      if (!operation.controller.signal.aborted) operation.failureMessage = 'Connection lost during upload. Check your Wi-Fi and tap Upload to try again. Your photos are still selected.';
       throw error;
     }
 
@@ -495,6 +499,7 @@ uploadBtn.addEventListener('click', async () => {
     renderSelectedTray();
     setStatus(`Uploaded ${uploadedCount} photo${uploadedCount > 1 ? 's' : ''}.`, 'success');
   } catch (error) {
+    console.warn('Phone send failed:', error);
     setStatus(operation.failureMessage, 'error');
   } finally {
     operation.controller.abort();

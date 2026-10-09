@@ -85,7 +85,8 @@ test('firewall ADD failures warn without aborting or interrupting silent updates
   assert.match(install, /\$\{If\} \$SnapOverLANTcpFirewallResult != "0"\s+\$\{OrIf\} \$SnapOverLANMdnsFirewallResult != "0"/);
   assert.match(install, /DetailPrint "\$\{SNAPOVERLAN_FIREWALL_WARNING\}"/);
   assert.match(install, /MessageBox MB_OK\|MB_ICONEXCLAMATION "\$\{SNAPOVERLAN_FIREWALL_WARNING\}" \/SD IDOK/);
-  assert.match(source, /SnapOverLAN installed, but Windows Firewall could not be configured completely\.[^\r\n]*manually allowing SnapOverLAN/);
+  assert.equal(source.match(/^!define SNAPOVERLAN_FIREWALL_WARNING "([^"]+)"/m)?.[1],
+    'SnapOverLAN was installed, but its Private-network firewall rules could not be configured. Phone transfers may not work. Make sure your network is trusted and set to Private, then rerun Setup as administrator to retry.');
   assert.doesNotMatch(install, /\bAbort\b|\bQuit\b/);
   const uninstall = source.match(/!macro customUnInstall\r?\n([\s\S]*?)!macroend/)[1];
   for (const block of [install, uninstall]) {

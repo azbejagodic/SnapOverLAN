@@ -2,7 +2,7 @@
 !define SNAPOVERLAN_FIREWALL_DESC "allow phones on the same private LAN to reach SnapOverLAN on port 8787"
 !define SNAPOVERLAN_MDNS_FIREWALL_RULE "SnapOverLAN mDNS"
 !define SNAPOVERLAN_MDNS_FIREWALL_DESC "allow local devices to discover SnapOverLAN over mDNS"
-!define SNAPOVERLAN_FIREWALL_WARNING "SnapOverLAN installed, but Windows Firewall could not be configured completely. Phone connectivity may require manually allowing SnapOverLAN through Windows Firewall on your Private network."
+!define SNAPOVERLAN_FIREWALL_WARNING "SnapOverLAN was installed, but its Private-network firewall rules could not be configured. Phone transfers may not work. Make sure your network is trusted and set to Private, then rerun Setup as administrator to retry."
 
 !ifndef BUILD_UNINSTALLER
 !include "${__FILEDIR__}\update-progress-ui.nsh"

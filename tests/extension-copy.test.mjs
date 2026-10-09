@@ -5,25 +5,31 @@ import { runInNewContext } from 'node:vm';
 
 const source = await readFile(new URL('../extension/popup.js', import.meta.url), 'utf8');
 const imageUrl = 'http://localhost:8787/files/photo.jpg';
-const warning = 'Image is too large to copy. Use Open or Download instead.';
+const warning = 'This photo is too large to copy from the extension. Tap Open to view it in a tab.';
 
 class Element {
   children = [];
+  _textContent = '';
+  get textContent() { return this._textContent; }
+  set textContent(value) { this._textContent = value; this.children = []; }
+  get childNodes() { return this.children; }
   listeners = new Map();
   disabled = false;
   addEventListener(event, listener) { this.listeners.set(event, listener); }
   append(...children) { this.children.push(...children); }
   appendChild(child) { this.append(child); }
   click() { return this.listeners.get('click')(); }
+  setAttribute() {}
 }
 
-function createHarness({ width = 4000, height = 3000, fail } = {}) {
+function createHarness({ width = 4000, height = 3000, fail, fetchImpl, permissionDenied = false } = {}) {
   const events = [];
   const writes = [];
   const opened = [];
+  const errors = [];
   const elements = Object.fromEntries(['autoCopyToggleBtn', 'refreshBtn', 'status', 'grid']
     .map((id) => [id, new Element()]));
-  const input = new Blob(['source image'], { type: 'image/jpeg' });
+  const input = new Blob(['source image'], { type: fail === 'type' ? 'text/html' : 'image/jpeg' });
   const png = new Blob(['converted image'], { type: 'image/png' });
   const bitmap = { width, height, close: () => events.push('close') };
   const canvas = {
@@ -44,12 +50,13 @@ function createHarness({ width = 4000, height = 3000, fail } = {}) {
       callback(fail === 'png' ? null : png);
     },
   };
-  const popup = runInNewContext(`${source}\n({ makeCard })`, {
+  const popup = runInNewContext(`${source}\n({ makeCard, refresh, syncAutoCopySetting })`, {
     URL,
-    console: { log() {}, error() {} },
+    console: { log() {}, error: (...args) => errors.push(args) },
     document: {
       getElementById: (id) => elements[id],
       addEventListener() {},
+      createDocumentFragment: () => new Element(),
       createElement(tag) {
         if (tag !== 'canvas') return new Element();
         events.push('canvas');
@@ -58,11 +65,21 @@ function createHarness({ width = 4000, height = 3000, fail } = {}) {
       },
     },
     window: { addEventListener() {} },
-    chrome: { tabs: { create: async ({ url }) => opened.push(url) } },
-    fetch: async (url) => {
+    chrome: {
+      tabs: { create: async ({ url }) => opened.push(url) },
+      permissions: { contains: async () => !permissionDenied, request: async () => false },
+    },
+    fetch: async (url, options) => {
+      if (fetchImpl) return fetchImpl(url, options);
+      if (url.endsWith('/api/latest')) return { ok: true, json: async () => ({ files: [{ name: 'photo.jpg' }] }) };
+      if (url.endsWith('/api/auto-copy')) return { ok: true, json: async () => ({ enabled: false }) };
       events.push('fetch');
       assert.equal(url, imageUrl);
-      return { ok: true, status: 200, blob: async () => input };
+      if (fail === 'network') throw new Error('raw network failure');
+      return { ok: fail !== 'http', status: fail === 'http' ? 404 : 200, blob: async () => {
+        if (fail === 'blob') throw new Error('raw blob failure');
+        return input;
+      } };
     },
     createImageBitmap: async (blob) => {
       events.push('decode');
@@ -81,7 +98,8 @@ function createHarness({ width = 4000, height = 3000, fail } = {}) {
   });
   const card = popup.makeCard('http://localhost:8787', { name: 'photo.jpg', url: '/files/photo.jpg' });
   const [copy, open] = card.children[2].children;
-  return { events, writes, opened, canvas, png, card, copy, open, status: elements.status };
+  return { events, writes, opened, canvas, png, card, copy, open, popup, errors,
+    status: elements.status, refresh: elements.refreshBtn, toggle: elements.autoCopyToggleBtn };
 }
 
 for (const [label, width, height] of [['12 MP', 4000, 3000], ['exactly 40 MP', 8000, 5000]]) {
@@ -134,8 +152,8 @@ for (const fail of ['canvas', 'context', 'draw', 'png', 'clipboard']) {
     assert.equal(h.writes.length, fail === 'clipboard' ? 1 : 0);
     assert.equal(h.status.className, 'error');
     assert.equal(h.status.textContent, fail === 'clipboard'
-      ? 'Clipboard write denied: permission denied'
-      : 'Copy blocked. Use Open then Ctrl+C.');
+      ? "Couldn't copy to the clipboard. Check your browser permissions and try again."
+      : "Couldn't convert this photo for copying. Tap Open to view it instead.");
     assert.equal(h.copy.disabled, false);
   });
 }
@@ -145,7 +163,113 @@ test('decode failure retains the existing error without creating canvas or writi
   await h.copy.click();
   assert.deepEqual(h.events, ['fetch', 'decode']);
   assert.equal(h.writes.length, 0);
-  assert.equal(h.status.textContent, 'Copy blocked. Use Open then Ctrl+C.');
+  assert.equal(h.status.textContent, "Couldn't convert this photo for copying. Tap Open to view it instead.");
   assert.equal(h.status.className, 'error');
   assert.equal(h.copy.disabled, false);
+});
+
+for (const [fail, message] of [
+  ['network', "Couldn't load this photo. Make sure SnapOverLAN is open, then try again."],
+  ['http', "Couldn't get this photo from SnapOverLAN. Tap Refresh and try again."],
+  ['type', "Couldn't copy this file because it wasn't received as an image. Try Open instead."],
+  ['blob', "Couldn't copy this photo. Try Open instead."],
+]) {
+  test(`${fail} copy failure shows safe guidance and keeps Open available`, async () => {
+    const h = createHarness({ fail });
+    await h.copy.click();
+    assert.equal(h.status.textContent, message);
+    assert.equal(h.status.className, 'error');
+    assert.equal(h.copy.disabled, false);
+    assert.equal(h.open.textContent, 'Open');
+    await h.open.click();
+    assert.deepEqual(h.opened, [imageUrl]);
+    assert.ok(h.errors.length);
+  });
+}
+
+for (const method of ['GET', 'PUT']) {
+  for (const body of [{ error: 'Internal exception C:/private/settings.json' }, null]) {
+    test(`Auto-copy ${method} HTTP failure uses operation-specific wording and logs diagnostics`, async () => {
+      let failing = false;
+      const h = createHarness({ fetchImpl: async (_url, options) => {
+        assert.equal(options.method, failing ? method : 'GET');
+        return failing ? { ok: false, status: 500, json: async () => body }
+          : { ok: true, json: async () => ({ enabled: false }) };
+      } });
+      await h.popup.syncAutoCopySetting();
+      failing = true;
+      if (method === 'GET') await h.popup.syncAutoCopySetting();
+      else await h.toggle.click();
+      assert.equal(h.status.textContent, method === 'GET'
+        ? "Couldn't read Auto-copy settings. Try again."
+        : "Couldn't change Auto-copy. Try again.");
+      assert.equal(h.status.className, 'error');
+      assert.match(h.errors.at(-1)[1].message, body ? /Internal exception/ : /Server returned 500/);
+      assert.equal(h.toggle.disabled, false);
+    });
+  }
+}
+
+test('Auto-copy connection and invalid-response errors show safe guidance', async () => {
+  for (const [fetchImpl, message] of [
+    [async () => { throw new Error('raw network failure'); }, "Couldn't reach SnapOverLAN. Make sure the desktop app is open, then try again."],
+    [async () => ({ ok: true, json: async () => ({ enabled: 'bad' }) }), "Couldn't read the Auto-copy setting. Try again."],
+  ]) {
+    const h = createHarness({ fetchImpl });
+    await h.popup.syncAutoCopySetting();
+    assert.equal(h.status.textContent, message);
+    assert.equal(h.status.className, 'error');
+    assert.ok(h.errors.length);
+    assert.equal(h.toggle.disabled, true);
+  }
+});
+
+test('permission denial has actionable guidance in refresh and Auto-copy contexts', async () => {
+  const h = createHarness({ permissionDenied: true });
+  for (const action of [() => h.popup.refresh(), () => h.popup.syncAutoCopySetting()]) {
+    await action();
+    assert.equal(h.status.textContent, 'Browser access to SnapOverLAN was denied. Allow access in your extension permissions, then try again.');
+    assert.equal(h.status.className, 'error');
+  }
+  assert.match(h.errors.at(-1)[1].message, /Host permission denied for http:\/\/localhost:8787\/\*/);
+});
+
+test('invalid image entries and refresh failures use the approved messages', async () => {
+  for (const [fetchImpl, message] of [
+    [async () => ({ ok: true, json: async () => ({ files: [{}] }) }), "Couldn't display the received photos. Try Refresh."],
+    [async () => { throw new Error('raw network failure'); }, "Couldn't load photos. Make sure SnapOverLAN is open on your PC, then tap Refresh."],
+  ]) {
+    const h = createHarness({ fetchImpl });
+    await h.popup.refresh();
+    assert.equal(h.status.textContent, message);
+    assert.equal(h.status.className, 'error');
+    assert.ok(h.errors.length);
+  }
+  const markup = await readFile(new URL('../extension/popup.html', import.meta.url), 'utf8');
+  assert.match(markup, /id="refreshBtn"[^>]*>Refresh</);
+});
+
+test('background refresh and successful settings reads preserve a displayed copy error until explicit Refresh', async () => {
+  const h = createHarness({ fail: 'clipboard' });
+  await h.popup.refresh();
+  await h.copy.click();
+  const message = h.status.textContent;
+  await h.popup.refresh(); // Same image signature.
+  await h.popup.refresh({ force: true }); // Focus refresh rebuilds the cards.
+  await h.popup.syncAutoCopySetting();
+  assert.equal(h.status.textContent, message);
+  assert.equal(h.status.className, 'error');
+  await h.refresh.click();
+  assert.equal(h.status.textContent, '');
+  assert.equal(h.status.className, 'muted');
+});
+
+test('successful Auto-copy read after a manual refresh failure cannot erase that failure', async () => {
+  const h = createHarness({ fetchImpl: async (url) => {
+    if (url.endsWith('/api/latest')) throw new Error('raw refresh failure');
+    return { ok: true, json: async () => ({ enabled: false }) };
+  } });
+  await h.refresh.click();
+  assert.equal(h.status.textContent, "Couldn't load photos. Make sure SnapOverLAN is open on your PC, then tap Refresh.");
+  assert.equal(h.status.className, 'error');
 });

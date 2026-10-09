@@ -12,9 +12,14 @@ let autoCopySettingLoaded = false;
 let latestImageSignature = '';
 let refreshInFlight = false;
 
-function setStatus(message, type = 'muted') {
+function setStatus(message, type = 'muted', { preserveError = false } = {}) {
+  if (preserveError && statusEl.className === 'error' && type !== 'error') return;
   statusEl.textContent = message;
   statusEl.className = type;
+}
+
+function popupError(message, userMessage, cause) {
+  return Object.assign(new Error(message, { cause }), { userMessage });
 }
 
 function toHostPattern(origin) {
@@ -29,7 +34,8 @@ async function ensureHostPermission(origin) {
 
   const granted = await chrome.permissions.request({ origins: [pattern] });
   if (!granted) {
-    throw new Error(`Host permission denied for ${pattern}`);
+    throw popupError(`Host permission denied for ${pattern}`,
+      'Browser access to SnapOverLAN was denied. Allow access in your extension permissions, then try again.');
   }
 }
 
@@ -55,8 +61,9 @@ async function requestAutoCopySetting(origin, method = 'GET', enabled) {
   let response;
   try {
     response = await fetch(`${origin}/api/auto-copy`, requestOptions);
-  } catch {
-    throw new Error('Could not connect to the desktop app.');
+  } catch (error) {
+    throw popupError('Could not connect to the desktop app.',
+      "Couldn't reach SnapOverLAN. Make sure the desktop app is open, then try again.", error);
   }
 
   let json = null;
@@ -64,10 +71,11 @@ async function requestAutoCopySetting(origin, method = 'GET', enabled) {
     json = await response.json();
   } catch {}
   if (!response.ok) {
-    throw new Error(json?.error || `Server returned ${response.status} for /api/auto-copy.`);
+    throw popupError(json?.error || `Server returned ${response.status} for /api/auto-copy.`,
+      method === 'GET' ? "Couldn't read Auto-copy settings. Try again." : "Couldn't change Auto-copy. Try again.");
   }
   if (typeof json?.enabled !== 'boolean') {
-    throw new Error('Invalid auto-copy response from the desktop app.');
+    throw popupError('Invalid auto-copy response from the desktop app.', "Couldn't read the Auto-copy setting. Try again.");
   }
   return json.enabled;
 }
@@ -82,10 +90,10 @@ async function syncAutoCopySetting() {
     await ensureHostPermission(origin);
     autoCopyEnabled = await requestAutoCopySetting(origin);
     autoCopySettingLoaded = true;
-    setStatus('', 'muted');
+    setStatus('', 'muted', { preserveError: true });
   } catch (error) {
     console.error('[popup] auto-copy read failed', error);
-    setStatus(error.message || 'Could not read the Auto-copy setting.', 'error');
+    setStatus(error.userMessage || "Couldn't read Auto-copy settings. Try again.", 'error');
   } finally {
     autoCopyRequestInFlight = false;
     renderAutoCopyToggle();
@@ -140,12 +148,13 @@ async function convertImageBlobToPng(blob) {
     bitmap = await createImageBitmap(blob);
   } catch (error) {
     console.error('[popup] createImageBitmap failed', error);
-    throw new Error('Copy blocked. Use Open then Ctrl+C.');
+    throw popupError('Copy blocked. Use Open then Ctrl+C.', "Couldn't convert this photo for copying. Tap Open to view it instead.", error);
   }
 
   try {
     if (bitmap.width * bitmap.height > MAX_COPY_PIXELS) {
-      throw new Error('Image is too large to copy. Use Open or Download instead.');
+      throw popupError('Image is too large to copy. Use Open or Download instead.',
+        'This photo is too large to copy from the extension. Tap Open to view it in a tab.');
     }
 
     try {
@@ -174,7 +183,7 @@ async function convertImageBlobToPng(blob) {
       return pngBlob;
     } catch (error) {
       console.error('[popup] PNG conversion failed', error);
-      throw new Error('Copy blocked. Use Open then Ctrl+C.');
+      throw popupError('Copy blocked. Use Open then Ctrl+C.', "Couldn't convert this photo for copying. Tap Open to view it instead.", error);
     }
   } finally {
     bitmap.close();
@@ -188,17 +197,20 @@ async function copyImageFromPopup(imageUrl) {
     response = await fetch(imageUrl);
   } catch (error) {
     console.error('[popup] copy fetch failed', error);
-    throw new Error('Network/CORS error while downloading image.');
+    throw popupError('Network/CORS error while downloading image.',
+      "Couldn't load this photo. Make sure SnapOverLAN is open, then try again.", error);
   }
 
   console.log('[popup] copy fetch end', { status: response.status });
   if (!response.ok) {
-    throw new Error(`Failed to fetch image (${response.status}).`);
+    throw popupError(`Failed to fetch image (${response.status}).`,
+      "Couldn't get this photo from SnapOverLAN. Tap Refresh and try again.");
   }
 
   const blob = await response.blob();
   if (!blob.type || !blob.type.startsWith('image/')) {
-    throw new Error(`Fetched resource is not an image blob (type: ${blob.type || 'unknown'}).`);
+    throw popupError(`Fetched resource is not an image blob (type: ${blob.type || 'unknown'}).`,
+      "Couldn't copy this file because it wasn't received as an image. Try Open instead.");
   }
 
   setStatus('Converting...', 'muted');
@@ -211,7 +223,8 @@ async function copyImageFromPopup(imageUrl) {
     console.log('[popup] clipboard write end');
   } catch (error) {
     console.error('[popup] clipboard write failed', error);
-    throw new Error(`Clipboard write denied: ${error?.message || 'unknown error'}`);
+    throw popupError(`Clipboard write denied: ${error?.message || 'unknown error'}`,
+      "Couldn't copy to the clipboard. Check your browser permissions and try again.", error);
   }
 }
 
@@ -250,7 +263,7 @@ function makeCard(origin, file) {
       setStatus('Copied as PNG', 'ok');
     } catch (error) {
       console.error('[popup] copy failed', error);
-      setStatus(error.message || 'Failed to copy image.', 'error');
+      setStatus(error.userMessage || "Couldn't copy this photo. Try Open instead.", 'error');
     } finally {
       copyBtn.disabled = false;
     }
@@ -285,7 +298,7 @@ async function refresh({ showLoading = false, force = false } = {}) {
     const nextSignature = getImageSignature(files);
 
     if (!force && nextSignature === latestImageSignature) {
-      setStatus('', 'muted');
+      setStatus('', 'muted', { preserveError: !showLoading });
       return;
     }
 
@@ -293,7 +306,7 @@ async function refresh({ showLoading = false, force = false } = {}) {
       console.log('[popup] rendering count computed', { apiFilesCount: files.length, renderedCount: 0 });
       latestImageSignature = nextSignature;
       gridEl.textContent = '';
-      setStatus('No files found.', 'muted');
+      setStatus('No files found.', 'muted', { preserveError: !showLoading });
       return;
     }
 
@@ -315,7 +328,7 @@ async function refresh({ showLoading = false, force = false } = {}) {
     if (!renderedCount) {
       latestImageSignature = nextSignature;
       gridEl.textContent = '';
-      setStatus('No valid image entries found in API response.', 'error');
+      setStatus("Couldn't display the received photos. Try Refresh.", 'error');
       return;
     }
 
@@ -324,10 +337,10 @@ async function refresh({ showLoading = false, force = false } = {}) {
     gridEl.appendChild(fragment);
     gridEl.scrollTop = scrollTop;
     latestImageSignature = nextSignature;
-    setStatus('', 'muted');
+    setStatus('', 'muted', { preserveError: !showLoading });
   } catch (error) {
     console.error('[popup] refresh failed', error);
-    setStatus('Could not connect to server.', 'error');
+    setStatus(error.userMessage || "Couldn't load photos. Make sure SnapOverLAN is open on your PC, then tap Refresh.", 'error');
   } finally {
     refreshInFlight = false;
     refreshBtn.disabled = false;
@@ -357,7 +370,7 @@ autoCopyToggleBtn.addEventListener('click', async () => {
     setStatus('', 'muted');
   } catch (error) {
     console.error('[popup] auto-copy update failed', error);
-    setStatus(error.message || 'Could not update the Auto-copy setting.', 'error');
+    setStatus(error.userMessage || "Couldn't change Auto-copy. Try again.", 'error');
   } finally {
     autoCopyRequestInFlight = false;
     renderAutoCopyToggle();

@@ -1,3 +1,17 @@
+const batchErrorMessages = new Map([
+  ['Desktop download is unavailable.', "Downloading isn't available right now. Restart SnapOverLAN and try again."],
+  ['Invalid batch id.', "Couldn't find this upload. Refresh and try again."],
+  ['Invalid batch filename.', "Couldn't find a valid file in this upload."],
+  ['A destination folder is required.', "Couldn't find a destination for these photos. Check your Downloads folder and try again."],
+  ['The selected batch has no files.', 'This upload has no photos to download.'],
+  ['Batch not found.', 'This upload is no longer available. Refresh the list.'],
+  ['No current batch.', 'There is no current upload to download.'],
+  ['Invalid filename.', "A file in this upload couldn't be accessed."],
+  ['Invalid batch path.', "This saved upload couldn't be accessed. Try again."],
+  ['Storage request failed.', "Couldn't access saved uploads right now. Try again."],
+  ['Download timed out. Please try again.', 'Download timed out. Please try again.'],
+]);
+
 const formatBatchDate = (value) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Unknown time';
@@ -22,6 +36,15 @@ const createBatchHistory = ({
   let refreshPromise = null;
   let available = false;
   let availabilityRevision = 0;
+
+  const showError = (error, fallback) => {
+    console.error('Saved upload operation failed:', error);
+    // Electron prefixes errors crossing IPC; only map recognized messages.
+    const message = typeof error?.message === 'string'
+      ? error.message.replace(/^Error invoking remote method '(?:batch:download|server:request)': (?:Error: )?/, '') : '';
+    setMessage(batchErrorMessages.get(message) || (/^Download failed \(\d{3}\)\.$/.test(message)
+      ? "Couldn't download a photo from this upload. Try again." : fallback));
+  };
 
   const getCurrentBatch = () => batches.find((batch) => batch.current);
 
@@ -98,8 +121,10 @@ const createBatchHistory = ({
         if (!available || revision !== availabilityRevision) return;
         batches = Array.isArray(batchData.batches) ? batchData.batches : [];
         render();
+        return true;
       } catch (error) {
-        setMessage(error.message || 'Could not load batches.');
+        showError(error, "Couldn't load saved uploads. Try Refresh.");
+        return false;
       } finally {
         refreshPromise = null;
       }
@@ -108,8 +133,7 @@ const createBatchHistory = ({
   };
 
   const refresh = async () => {
-    await load();
-    clearMessage();
+    if (await load()) clearMessage();
   };
 
   async function selectBatch(id) {
@@ -118,7 +142,7 @@ const createBatchHistory = ({
       await fetchJson(`/api/batches/${encodeURIComponent(id)}/select`, { method: 'POST' });
       await refresh();
     } catch (error) {
-      setMessage(error.message || 'Could not select batch.');
+      showError(error, "Couldn't select this upload. Try again.");
     }
   }
 
@@ -129,7 +153,7 @@ const createBatchHistory = ({
       await fetchJson(`/api/batches/${encodeURIComponent(batch.id)}`, { method: 'DELETE' });
       await refresh();
     } catch (error) {
-      setMessage(error.message || 'Could not delete batch.');
+      showError(error, "Couldn't delete this upload. Try again.");
     }
   }
 
@@ -140,7 +164,7 @@ const createBatchHistory = ({
       await fetchJson('/api/batches', { method: 'DELETE' });
       await refresh();
     } catch (error) {
-      setMessage(error.message || 'Could not clear batches.');
+      showError(error, "Couldn't clear saved uploads. Try again.");
     }
   };
 
@@ -155,7 +179,7 @@ const createBatchHistory = ({
       await window.snapOverLAN.downloadBatch(currentBatch.id);
       clearMessage();
     } catch (error) {
-      setMessage(error.message || 'Could not download the current batch.');
+      showError(error, "Couldn't download the selected upload. Try again.");
     } finally {
       downloadButton.textContent = 'Download';
       updateDownloadButton();

@@ -75,7 +75,8 @@ async function requestAutoCopySetting(origin, method = 'GET', enabled) {
       method === 'GET' ? "Couldn't read Auto-copy settings. Try again." : "Couldn't change Auto-copy. Try again.");
   }
   if (typeof json?.enabled !== 'boolean') {
-    throw popupError('Invalid auto-copy response from the desktop app.', "Couldn't read the Auto-copy setting. Try again.");
+    throw popupError('Invalid auto-copy response from the desktop app.',
+      method === 'GET' ? "Couldn't read the Auto-copy setting. Try again." : "Couldn't change Auto-copy. Try again.");
   }
   return json.enabled;
 }

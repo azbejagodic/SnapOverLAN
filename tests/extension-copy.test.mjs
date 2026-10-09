@@ -210,6 +210,28 @@ for (const method of ['GET', 'PUT']) {
   }
 }
 
+for (const method of ['GET', 'PUT']) {
+  test(`Auto-copy ${method} invalid successful response uses operation-specific wording and logs the technical error`, async () => {
+    let invalid = false;
+    const h = createHarness({ fetchImpl: async (_url, options) => {
+      assert.equal(options.method, invalid ? method : 'GET');
+      return { ok: true, status: 200, json: async () => ({ enabled: invalid ? 'bad' : false }) };
+    } });
+    await h.popup.syncAutoCopySetting();
+    invalid = true;
+    if (method === 'GET') await h.popup.syncAutoCopySetting();
+    else await h.toggle.click();
+    assert.equal(h.status.textContent, method === 'GET'
+      ? "Couldn't read the Auto-copy setting. Try again."
+      : "Couldn't change Auto-copy. Try again.");
+    assert.equal(h.status.className, 'error');
+    assert.equal(h.errors.at(-1)[0], method === 'GET' ? '[popup] auto-copy read failed' : '[popup] auto-copy update failed');
+    assert.equal(h.errors.at(-1)[1].message, 'Invalid auto-copy response from the desktop app.');
+    assert.equal(h.toggle.textContent, 'Auto-copy: Off');
+    assert.equal(h.toggle.disabled, false);
+  });
+}
+
 test('Auto-copy connection and invalid-response errors show safe guidance', async () => {
   for (const [fetchImpl, message] of [
     [async () => { throw new Error('raw network failure'); }, "Couldn't reach SnapOverLAN. Make sure the desktop app is open, then try again."],

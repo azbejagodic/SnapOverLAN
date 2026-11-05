@@ -19,6 +19,33 @@ const mainSource = await readFile(new URL(mainModuleUrl), 'utf8');
 const executableMain = mainSource
   .replace(/^import[\s\S]*?;\r?\n/gm, '')
   .replaceAll('import.meta.url', 'mainModuleUrl');
+const [dialogHtml, dialogRenderer, dialogPreload] = await Promise.all([
+  readFile(new URL('../app/renderer/update-dialog.html', import.meta.url), 'utf8'),
+  readFile(new URL('../app/renderer/update-dialog.js', import.meta.url), 'utf8'),
+  readFile(new URL('../app/desktop/update-dialog-preload.cjs', import.meta.url), 'utf8'),
+]);
+// Execute the shipped renderer and preload; only DOM and Electron transport are fake.
+const mountDialog = (popup) => {
+  const elements = new Map([...dialogHtml.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, {
+    listeners: new Map(),
+    addEventListener(event, callback) { this.listeners.set(event, callback); },
+    focus() {},
+  }]));
+  const window = { location: { search: '?version=9.0.0' }, addEventListener() {} };
+  runInNewContext(dialogPreload, {
+    require: (name) => {
+      assert.equal(name, 'electron');
+      return {
+        contextBridge: { exposeInMainWorld: (name, api) => { window[name] = api; } },
+        ipcRenderer: { send: (channel, action) => popup.webContents.emit('ipc-message', {}, channel, action) },
+      };
+    },
+  });
+  runInNewContext(dialogRenderer, {
+    window, document: { getElementById: (id) => elements.get(id) }, URLSearchParams,
+  });
+  return { click: (id) => elements.get(id).listeners.get('click')() };
+};
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => {
   let resolve;
@@ -57,7 +84,7 @@ const createClock = () => {
 
 const createHarness = ({
   initialization = Promise.resolve(), initializationError = null, isPackaged = true,
-  settings = { backgroundMode: true }, env = {},
+  settings = { backgroundMode: true }, env = {}, stop = async () => {},
 } = {}) => {
   const ready = deferred();
   const clock = createClock();
@@ -66,6 +93,8 @@ const createHarness = ({
   const errors = [];
   const warnings = [];
   const dialogStates = [];
+  const installArguments = [];
+  let stopCalls = 0;
   const handlers = new Map();
   let initializationCalls = 0;
   let checkCalls = 0;
@@ -115,7 +144,7 @@ const createHarness = ({
   }
 
   const updater = new EventEmitter();
-  updater.quitAndInstall = () => {};
+  updater.quitAndInstall = (...args) => installArguments.push(args);
   updater.checkForUpdates = async () => {
     checkCalls += 1;
     activeChecks += 1;
@@ -162,6 +191,14 @@ const createHarness = ({
       return {
         start: async () => changeServerState('online'),
         getState: () => state,
+        getOperation: () => null,
+        isRunning: () => state.state === 'online',
+        stop: async (options) => {
+          stopCalls += 1;
+          assert.equal(options.onlyIfIdle, true);
+          await stop();
+          changeServerState('offline');
+        },
       };
     },
     createElectronUpdateManager: async () => {
@@ -183,7 +220,8 @@ const createHarness = ({
   });
   return {
     desktop, electronApp, updater, manager, windows, trays, errors, warnings, dialogStates,
-    clock,
+    clock, installArguments,
+    get stopCalls() { return stopCalls; },
     get updateWindows() {
       return windows.filter((window) => window.options.title === 'SnapOverLAN Update');
     },
@@ -423,6 +461,7 @@ for (const dismissal of ['later', 'close']) {
       app.desktop.getMainWindow().close();
       reopen();
       await flush();
+      assert.equal(app.updateWindows.length, index + 2, 'cached update prompts without a new download event');
       app.updater.emit('update-downloaded', { version: '9.0.0' });
       await flush();
       assert.equal(app.desktop.getMainWindow().isVisible(), true);
@@ -711,4 +750,64 @@ test('disabled or failed updater initialization does not schedule periodic check
     assert.equal(app.checkCalls, 0);
     assert.equal(app.updateWindows.length, 0);
   }
+});
+
+test('Later button crosses renderer and preload without installing or saving a skipped version', async () => {
+  const settings = { backgroundMode: true, skippedUpdateVersion: '2.0.1' };
+  const app = createHarness({ settings });
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  const popup = app.updateWindows[0];
+  mountDialog(popup).click('laterButton');
+  await flush();
+  assert.equal(popup.isDestroyed(), true);
+  assert.equal(app.stopCalls, 0);
+  assert.deepEqual(app.installArguments, []);
+  assert.equal(settings.skippedUpdateVersion, '2.0.1');
+  assert.equal(app.manager.isInstallationReady(), true);
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  assert.equal(app.updateWindows.length, 1);
+  assert.deepEqual(app.errors, []);
+});
+
+test('Restart button on a cached reopen waits for cleanup and installs exactly once through the real bridge', async () => {
+  const cleanup = deferred();
+  const feed = deferred();
+  const app = createHarness({ stop: () => cleanup.promise });
+  await app.ready();
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  mountDialog(app.updateWindows[0]).click('laterButton');
+  await flush();
+  app.setCheck(() => feed.promise);
+  app.electronApp.emit('second-instance');
+  await flush();
+  assert.equal(app.checkCalls, 2);
+  assert.equal(app.updateWindows.length, 2, 'prompt must not wait for the feed');
+  const popup = app.updateWindows[1];
+  const ui = mountDialog(popup);
+  ui.click('restartButton');
+  ui.click('restartButton');
+  ui.click('laterButton');
+  popup.close();
+  await flush();
+  assert.equal(app.stopCalls, 1);
+  assert.equal(popup.isDestroyed(), false);
+  assert.deepEqual(app.installArguments, [], 'installation must wait for server cleanup');
+  cleanup.resolve();
+  await flush();
+  assert.deepEqual(app.installArguments, [[true, true]]);
+  assert.equal(popup.isDestroyed(), true);
+  assert.equal(app.trays[0].isDestroyed(), true);
+  feed.resolve({ isUpdateAvailable: true, updateInfo: { version: '9.0.0' } });
+  await flush();
+  app.electronApp.emit('second-instance');
+  app.updater.emit('update-downloaded', { version: '9.0.0' });
+  await flush();
+  assert.equal(app.updateWindows.length, 2);
+  assert.equal(app.checkCalls, 2);
+  assert.deepEqual(app.installArguments, [[true, true]]);
+  assert.deepEqual(app.errors, []);
 });
